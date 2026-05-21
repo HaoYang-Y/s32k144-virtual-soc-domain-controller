@@ -3,22 +3,51 @@
 > **目标人群**: 有 Linux C++ 基础，嵌入式 C 经验较少
 > **配套书籍**: 《汽车电子S32K系列微控制器——基于ARM Cortex-M4F内核》（苏勇 著）
 > **预计时长**: 8~12 周（每周 5~8 小时）
-> **核心产出**: S32K144 通过 CAN 发送数据到 Linux 虚拟机，理解 AUTOSAR CP/AP 核心概念
-> **原则**: 聚焦 CAN 主线，其他外设按需补充，不学寄存器级外设开发
+> **核心产出**: S32K144 接收 CAN 帧 → 解析信号 → UART 传给 SOC → SOC 封装 SOME/IP 发送
+> **原则**: 聚焦 CAN 主线，先独立学各外设，再组合实现域控制器
 
 ---
 
 ## ⚡ 硬件拓扑
 
 ```
+┌─────────────────────────────────────────────────────────────────────┐
+│                       域控制器完整数据流                             │
+│                                                                     │
+│  CAN 总线 ──── CAN 帧 (500kbps) ────► S32K144 MCU                  │
+│                                          │                          │
+│                                          ├─ FlexCAN 接收 CAN 帧     │
+│                                          ├─ DBC 信号解析            │
+│                                          └─ UART 结构化信号输出     │
+│                                              │                      │
+│                                              │ USB-UART (115200bps) │
+│                                              ▼                      │
+│                                        Ubuntu 虚拟机 (SOC)          │
+│                                          │                          │
+│                                          ├─ UART 接收/解析          │
+│                                          ├─ 信号融合                │
+│                                          ├─ SOME/IP 序列化          │
+│                                          └─ 车载以太网 ──► 其他域    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+开发阶段拓扑（独立模块验证时）：
 ┌─────────────────┐     CAN H/L      ┌──────────────┐     USB 直通     ┌─────────────────┐
 │  S32K144 开发板  ├─────────────────┤ USB-CAN 工具  ├─────────────────┤ Ubuntu 虚拟机   │
 │                 │   120Ω 终端电阻   │ (CANable/     │                 │ (SocketCAN)     │
 │  FlexCAN 模块    │                  │  USB2CAN)     │                 │ can0 / candump  │
-└─────────────────┘                  └──────────────┘                 └─────────────────┘
+└────────┬────────┘                  └──────────────┘                 └─────────────────┘
+         │
+         │ USB-UART (仅 domain_controller 联调时用)
+         ▼
+┌─────────────────┐
+│  Ubuntu 虚拟机   │
+│  (ttyUSB0)       │
+└─────────────────┘
 ```
 
-> **说明**: 你的主力是 Linux 开发，MCU 寄存器驱动只是辅助手段，不深入外设细节。
+> **说明**: 独立模块学习阶段，通过 USB-CAN 工具验证 FlexCAN 收发。进入域控制器联调阶段后，
+> 改为 CAN 总线输入给 MCU，MCU 解析后通过 UART 输出给 SOC，USB-CAN 工具不再直接连 SOC。
 
 ---
 
@@ -29,23 +58,28 @@
         ↓
 阶段 1：时钟 → FlexCAN 核心                   ← 聚焦 CAN 通信，其他外设略过
         ↓
-阶段 2：SocketCAN + CAN 信号解析              ← SOC 端协议栈
+阶段 2：MCU 端域控制器应用 (domain_controller) ← CAN 收 → 解析 → UART 发
         ↓
-阶段 3：SOME/IP 服务通信                      ← 双主线之 SOME/IP
+阶段 3：SOC 端 UART 接收 + 信号融合            ← 结合阶段 2 联调
         ↓
-阶段 4：UDS 诊断（后续扩展）
+阶段 4：SOME/IP 服务通信                      ← 双主线之 SOME/IP
+        ↓
+阶段 5：UDS 诊断（后续扩展）
 ```
 
 ---
 
 ## 阶段 0：环境搭建与硬件拓扑（1 天）
 
-### 硬件拓扑确认
+### 硬件拓扑确认（独立模块验证阶段）
 
 ```
 S32K144 CAN0_TX (PTD1) ──→ CAN 收发器 ──→ CAN H ──→ USB-CAN 工具 ──→ USB ──→ Ubuntu 虚拟机
 S32K144 CAN0_RX (PTD0) ──→ CAN 收发器 ──→ CAN L ──→ USB-CAN 工具 ──→ USB ──→ Ubuntu 虚拟机
 ```
+
+> **提示**: 阶段 2 联调时，USB-CAN 工具只连接 MCU 的 CAN 总线（产生 CAN 帧输入给 MCU），
+> MCU 通过独立的 USB-UART 线连接到 SOC 虚拟机传输解析后的信号。
 
 - 确认开发板 CAN 收发器供电正常
 - 确认 CAN 总线 H/L 两端接 **120Ω 终端电阻**
@@ -130,7 +164,7 @@ arm-none-eabi-gcc --version
 | 10.3-10.4 寄存器描述 | `mcu/flexcan/src/flexcan_driver.c` | CTRL/MCR/IFLAG/MB |
 | 10.5-10.6 驱动实现 | flexcan_driver.c 中的 TODO | 初始化、发送、接收、中断 |
 
-**验证方法**：
+**验证方法**（独立模块测试）：
 ```
 MCU 端 (S32K144)               Linux 虚拟机
   ┌──────────────┐   CAN 帧    ┌──────────────┐
@@ -146,35 +180,91 @@ MCU 端 (S32K144)               Linux 虚拟机
 
 ---
 
-## 阶段 2：SocketCAN + CAN 信号解析（3~4 周）← 核心
+## 阶段 2：MCU 端 domain_controller 应用（2~3 周）
 
-> 从 MCU 端上升到 SOC 端（Linux），使用 SocketCAN 实现 CAN 通信和信号解析
+> **核心阶段**: 将 FlexCAN + UART 组合为域控制器网关应用。
+> MCU 接收 CAN 帧 → 解析信号 → 通过 UART 发送结构化数据给 SOC。
 
-### 2.1 SocketCAN SOC 端收发
+### 2.1 新建 `mcu/domain_controller/` 目录
+
+| 文件 | 职责 | 依赖 |
+|------|------|------|
+| `src/main.c` | 主循环：FlexCAN 收帧 → 信号解析 → UART 发送 | `flexcan_driver.h`, `uart_driver.h` |
+| `include/dc_signal_parser.h` | CAN 信号解析接口（DBC 映射表） | — |
+| `src/dc_signal_parser.c` | 数据位操作：从 CAN 帧 payload 提取信号物理值 | — |
+| `include/dc_uart_proto.h` | UART 自定义传输协议定义 | — |
+| `src/dc_uart_proto.c` | UART 组帧/校验实现 | `uart_driver.h` |
+| `Makefile` | 编译链接，复用共享启动代码和链接脚本 | `../s32k144_flash.ld` |
+
+### 2.2 UART 自定义传输协议
+
+```
+帧结构 (8 字节)：
+┌────────┬────────┬────────────┬────────────┬────────┐
+│ 0xAA   │ 0x55   │ Signal ID  │ Value      │ CRC8   │
+│ (帧头)  │ (帧头)  │ (2 字节)   │ (4 字节)    │ (1 字节)│
+└────────┴────────┴────────────┴────────────┴────────┘
+```
+
+| 字段 | 大小 | 说明 |
+|------|------|------|
+| 帧头 0xAA 0x55 | 2 字节 | 帧同步，检测帧起始 |
+| Signal ID | 2 字节 | 信号标识符（小端，如 0x0001 = 车速） |
+| Value | 4 字节 | IEEE 754 float 或 int32 物理值 |
+| CRC8 | 1 字节 | 前 8 字节的 CRC8 校验，使用 0x07 多项式 |
+
+**波特率**: 115200 bps，8N1
+
+### 2.3 信号解析示例（DBC 映射）
+
+| CAN ID | 信号名 | 起始位 | 长度 | 因子 | 偏移 | 物理范围 |
+|--------|--------|--------|------|------|------|---------|
+| 0x123 | 车速 | 0 | 16 | 0.01 | 0 | 0~655.35 km/h |
+| 0x123 | 发动机转速 | 16 | 16 | 0.125 | 0 | 0~8191.875 rpm |
+| 0x456 | 油门开度 | 0 | 8 | 0.4 | 0 | 0~102 % |
+
+**验证**：MCU 收到 CAN 帧 → 解析信号 → UART 发出 → PC 串口助手或 minicom 查看
+
+✅ **完成标准**: MCU 能接收 CAN 帧，解析出物理信号值，通过 UART 输出到 PC 串口显示
+
+---
+
+## 阶段 3：SOC 端 UART 接收 + 信号融合（3~4 周）
+
+> 从 MCU 端上升到 SOC 端（Linux），SOC 通过 USB-UART 接收 MCU 发来的结构化信号数据。
+
+### 3.1 UART 接收管理器
 
 | 学习内容 | 项目对应代码 | 重点理解 |
 |---------|------------|---------|
-| SocketCAN 基础 | `soc/include/can_manager.h` | AF_CAN / SOCK_RAW |
-| CAN 帧收/发 | `soc/src/can_manager/can_manager.cpp` | send / recv / select |
-| 接收线程/回调 | can_manager.cpp 中的 TODO | 线程安全、环形缓冲区 |
+| Linux 串口编程 | `soc/include/uart_receiver.h` | termios 配置、非阻塞读 |
+| 自定义协议解析 | `soc/src/uart_receiver/` | 帧同步、CRC8 校验、环形缓冲区 |
+| 信号反序列化 | `soc/src/signal_fusion/signal_manager.cpp` | 字节序转换、物理值缓存 |
 
-**🔄 AUTOSAR CP 概念穿插**：理解 CanIf（CAN 接口层）的角色——它位于 MCAL Can 上层，抽象具体 CAN 硬件，为上层协议栈统一收发接口。
+**🔄 AUTOSAR 概念穿插**：理解 PduR（PDU 路由器）和 Com（通信管理器）的角色——UART 收到的结构化信号对应 AUTOSAR 中的 I-PDU。
 
-✅ **完成标准**: SOC 端程序能通过 SocketCAN 收发 CAN 帧
+✅ **完成标准**: SOC 端程序能通过 USB-UART 接收 MCU 发来的信号数据，输出到控制台
 
-### 2.2 CAN 信号解析（DBC 概念）
+### 3.2 SOC ↔ MCU 联调
 
-| 学习内容 | 项目对应代码 | 重点理解 |
-|---------|------------|---------|
-| CAN 信号定义 | `config/domain_config.yaml` signals 段 | DBC 基本元素 |
-| 信号提取算法 | `soc/include/signal_manager.h` | Intel/Motorola 字节序 |
-| 信号融合框架 | `soc/src/signal_fusion/signal_manager.cpp` | 信号缓存、变化通知 |
+```
+MCU 端 (S32K144) ──CAN帧──► USB-CAN 工具 (CAN 总线)
+             │
+             │ CAN 帧
+             ▼
+       MCU domain_controller  ← 从 CAN 总线收帧
+             │
+             │ 解析出信号 → 组帧 UART
+             ▼
+       USB-UART 线
+             │
+             ▼
+       SOC (Ubuntu) ── 接收/解析信号 ── 控制台输出
+```
 
-**🔄 AUTOSAR CP 概念穿插**：理解 PduR（PDU 路由器）和 Com（通信管理器）的角色。
+✅ **完成标准**: MCU 端通过 USB-CAN 工具接收 CAN 帧，解析后通过 UART 传给 SOC，SOC 控制台正确显示信号值
 
-✅ **完成标准**: SOC 端程序能解析 CAN 帧中的信号，输出物理值到控制台
-
-### 2.3 CAN 网络管理（CanNm 概念了解）
+### 3.3 CAN 网络管理（CanNm 概念了解）
 
 > 了解 AUTOSAR CP CanNm 网络管理机制——基于 CAN 的节点睡眠/唤醒协调
 
@@ -184,11 +274,11 @@ MCU 端 (S32K144)               Linux 虚拟机
 
 ---
 
-## 阶段 3：SOME/IP 服务通信（3~4 周）← 双主线之 SOME/IP
+## 阶段 4：SOME/IP 服务通信（3~4 周）← 双主线之 SOME/IP
 
 > 从 CAN 的"信号级"通信上升到 IP 网络的"服务级"通信，每层附 AUTOSAR AP 概念
 
-### 3.1 SOME/IP 协议基础
+### 4.1 SOME/IP 协议基础
 
 | 学习内容 | 项目相关代码/配置 | 重点理解 |
 |---------|-----------------|---------|
@@ -200,21 +290,35 @@ MCU 端 (S32K144)               Linux 虚拟机
 
 ✅ **完成标准**: 理解 SOME/IP 报文结构，能在 wireshark 中解析 SOME/IP 报文
 
-### 3.2 SOME/IP 服务发现（SD）
+### 4.2 SOME/IP 服务发现（SD）
 
 **🔄 AUTOSAR AP 概念穿插**：`ara::sd` 服务发现
 
 ✅ **完成标准**: 理解 SOME/IP SD 的 Offer/Subscribe 流程
 
-### 3.3 SOME/IP 序列化
+### 4.3 SOME/IP 序列化
 
 **🔄 AUTOSAR AP 概念穿插**：理解 E2E（端到端保护）
 
 ✅ **完成标准**: 能手动计算一个简单 SOME/IP 报文的序列化字节
 
+### 4.4 全链路联调
+
+```
+CAN 总线 ──► MCU (FlexCAN 收帧) ──► 信号解析 ──► UART ──► SOC
+                                                              │
+                                                     signal_manager
+                                                              │
+                                                     someip_server
+                                                              │
+                                                     ──► 其他域 (以太网)
+```
+
+✅ **完成标准**: CAN 帧从总线输入，最终作为 SOME/IP 服务发布
+
 ---
 
-## 阶段 4：UDS 诊断（ISO 14229）— 后续扩展
+## 阶段 5：UDS 诊断（ISO 14229）— 后续扩展
 
 | 书籍参考 | 关键服务 | 项目预留位置 |
 |---------|---------|-------------|
@@ -236,7 +340,7 @@ MCU 端 (S32K144)               Linux 虚拟机
     ↓
 可选（用到时再看）：
   - 第 4 章  GPIO     ← 调试 LED 指示时
-  - 第 5 章  UART     ← 需串口打印调试时
+  - 第 5 章  UART     ← domain_controller 联调必需
   - 第 7 章  PIT      ← 需精确定时时
   - 第 8 章  ADC      ← 需采集模拟信号时
   - 第 9 章  FTM      ← 需 PWM 时
@@ -249,9 +353,11 @@ MCU 端 (S32K144)               Linux 虚拟机
 | 阶段 | 内容 | 时间 | 产出 |
 |------|------|------|------|
 | 0 | 环境搭建 + 硬件拓扑 | 1 天 | USB-CAN 驱动成功，candump 能监听 |
-| 1 | 时钟 + FlexCAN | 2~4 周 | S32K144 发 CAN 帧到虚拟机 |
-| 2 | SocketCAN + CAN 信号解析 | 3~4 周 | SOC 端 CAN 协议栈 |
-| 3 | SOME/IP 服务通信 | 3~4 周 | 服务发现 + 序列化 |
-| 4 | UDS 诊断 | 后续 | 诊断协议栈 |
+| 1 | 时钟 + FlexCAN | 2~4 周 | S32K144 收发 CAN 帧 |
+| 2 | MCU 端 domain_controller | 2~3 周 | CAN 收帧 → 解析 → UART 发 |
+| 3 | SOC 端 UART + 信号融合 | 3~4 周 | MCU ↔ SOC UART 全链路联调 |
+| 4 | SOME/IP 服务通信 | 3~4 周 | 服务发现 + 序列化 + 全链路 |
+| 5 | UDS 诊断 | 后续 | 诊断协议栈 |
 
-> **一句话**: 不需要深入 MCU 寄存器开发，但需要理解 CAN 通信链路——从 S32K144 发 CAN 帧，到虚拟机 SocketCAN 收到并解析信号。
+> **一句话**: 从 MCU 寄存器到 SOC 服务——先独立学各外设，再组合实现
+> "CAN→MCU 解析→UART→SOC→SOME/IP" 完整域控制器链路。

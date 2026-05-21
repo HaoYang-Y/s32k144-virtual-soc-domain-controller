@@ -3,12 +3,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/MCU-S32K144-blue)](.)
 [![Build](https://img.shields.io/badge/Build-Makefile%20%7C%20CMake-green)](.)
+[![GitHub Stars](https://img.shields.io/github/stars/HaoYang-Y/s32k144-virtual-soc-domain-controller?style=social)](https://github.com/HaoYang-Y/s32k144-virtual-soc-domain-controller)
+
+> **仓库地址**
+>
+> [![GitHub](https://img.shields.io/badge/GitHub-HaoYang--Y/s32k144--virtual--soc--domain--controller-181717?logo=github)](https://github.com/HaoYang-Y/s32k144-virtual-soc-domain-controller)
+> [![Gitee](https://img.shields.io/badge/Gitee-Fighter--CTN/s32k144--virtual--soc--domain--controller-C71D23?logo=gitee)](https://gitee.com/Fighter-CTN/s32k144-virtual-soc-domain-controller)
+>
+> 如果这个工程对你有帮助，欢迎在 GitHub 上点一颗 ⭐ Star，让更多人看到！
 
 > **从 S32K144 MCU 到 Ubuntu 虚拟 SOC，逐层递进掌握车载通信协议栈**  
 >
-> 真实的 S32K144 MCU + 虚拟的 Ubuntu SOC，通过 CAN 总线通信，
-> 从 FlexCAN 寄存器驱动到 SocketCAN、再到 SOME/IP 服务通信，
-> 模拟真实车载域控制器的软硬协同架构。
+> 真实的 S32K144 MCU + 虚拟的 Ubuntu SOC，MCU 接收 CAN 信号、
+> 解析融合后通过 UART 传输给 SOC，SOC 将结构化信号封装为
+> SOME/IP 服务发送到其他域控制器——模拟真实车载域控制器架构。
 >
 > 每层通信都附 AUTOSAR CP / AP 概念穿插，形成完整知识体系。
 
@@ -30,8 +38,8 @@
 
 | 阶段 | 目标 | 关联 AUTOSAR 概念 |
 |------|------|------------------|
-| **一：MCU 硬件基础** | 5 大外设寄存器编程 | — |
-| **二：CAN 通信精进** | FlexCAN 驱动 + SocketCAN + CAN 信号解析 | MCAL Can, CanIf, PduR, Com, CanNm |
+| **一：MCU 硬件基础** | 6 大外设寄存器编程 | — |
+| **二：CAN 通信精进** | FlexCAN 驱动 + CAN 信号解析 + UART 传输 | MCAL Can, CanIf, PduR, Com, CanNm |
 | **三：SOME/IP 服务通信** | SOME/IP 协议 + 服务发现 + 序列化 | ara::com, ara::sd, E2E |
 | **四：UDS 诊断（后续）** | ISO 14229 诊断协议 | Dcm, Dem |
 
@@ -47,32 +55,41 @@
 ## 🏗 项目架构
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    笔记本电脑 (SOC 端)                     │
-│  ┌───────────────────────────────────────────────────┐    │
-│  │   Domain Controller App (TODO 骨架 - 待你实现)     │    │
-│  │   ├── ConfigManager   ← YAML 配置加载             │    │
-│  │   ├── CanBus          ← SocketCAN 收发            │    │
-│  │   ├── SignalFusion    ← CAN 信号解析与融合         │    │
-│  │   ├── SomeIpServer    ← SOME/IP 服务 (预留)       │    │
-│  │   └── UdsServer       ← UDS 诊断 (预留)           │    │
-│  └───────────────────────────────────────────────────┘    │
-│        │ CAN (USB↔CAN)                                    │
-│        │ UART (USB↔UART)                                  │
-└────────┼──────────────────────────────────────────────────┘
-         │
-┌────────▼──────────────────────────────────────────────────┐
-│           S32K144 MCU 节点（你动手实现的部分）             │
-│                                                          │
-│  6 大外设模块（独立目录，独立测试）                          │
-│  ┌──────┐ ┌──────┐ ┌───────┐ ┌─────┐ ┌────────┐ ┌─────┐  │
-│  │ GPIO │ │ UART │ │ TIMER │ │ ADC │ │ FlexCAN│ │Clock│  │
-│  │驱动  │ │驱动  │ │PIT/FTM│ │驱动  │ │驱动    │ │系统  │  │
-│  └──────┘ └──────┘ └───────┘ └─────┘ └────────┘ └─────┘  │
-│                                                          │
-│  每个模块: header + source + main + Makefile              │
-│  独立编译，独立烧录，独立验证                              │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       本工程数据流（学习简化版）                    │
+│                                                                  │
+│  CAN 总线 ──CAN帧──► MCU (S32K144)                              │
+│                        │                                         │
+│                        ├─ FlexCAN 接收 CAN 帧                    │
+│                        ├─ CAN 信号解析 (DBC 映射)                │
+│                        └─ UART 发送结构化信号                     │
+│                            │                                     │
+│                            │ USB-UART 线                         │
+│                            ▼                                     │
+│                        SOC (Ubuntu 虚拟机)                       │
+│                        ├─ UART 接收                              │
+│                        ├─ 信号反序列化 / 校验                     │
+│                        ├─ CAN 信号融合                           │
+│                        ├─ SOME/IP 序列化 + 服务发现               │
+│                        └─ 车载以太网 ──► 其他域控制器             │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+> 💡 **与实际工程的区别**
+>
+> 真实域控制器中，MCU 与 SOC 之间通常通过 **SPI 总线**（LPSPI）进行通信，
+> 以满足更高的带宽和实时性要求。本工程使用 **UART** 替代 SPI，
+> 原因如下：
+>
+> | 方面 | 实际工程（SPI） | 本工程（UART） |
+> |------|----------------|---------------|
+> | 通信速度 | 最高数十 Mbps | 最高 115200~921600 bps，足够教学演示 |
+> | 接线方式 | SCK + MOSI + MISO + CS（4 线） | TX + RX（2 线），入门友好 |
+> | 主机依赖 | SPI 需主机（MCU 或 SOC 一方做主） | UART 无需主从，两端对等，调试简单 |
+> | 硬件工具 | USB↔SPI 工具不易获取 | **USB↔UART 线容易买到** |
+>
+> **如果你有 USB↔SPI 工具**（如 FT4232H 等），可以对比学习两种通信方式。
+> MCU 端的 LPSPI 模块已预留，详见 [docs/MCU零基础学习计划.md](docs/MCU零基础学习计划.md) 扩展部分。
 ```
 
 ### 协议栈分层
@@ -80,11 +97,15 @@
 ```
    AUTOSAR AP 层            ara::com / ara::sd / E2E
         ↕                        SOME/IP 协议
-   AUTOSAR CP 层     PduR / Com / CanNm / CanIf
+   SOC UART 层            Socket 串口接收 / 自定义传输协议
+        ↕                        UART 物理层 (USB↔UART)
+   MCU UART 层            LPUART 驱动
+        ↕                        结构化信号 (解析后)
+   MCU 信号层             CAN 信号解析 / DBC 映射
         ↕                        CAN 帧
-   MCAL 层           FlexCAN 寄存器驱动 / MCAL Can
+   MCAL 层                FlexCAN 寄存器驱动 / MCAL Can
         ↕
-   硬件层            S32K144 物理总线 / SocketCAN
+   硬件层                 S32K144 CAN 收发器 / CAN 总线
 ```
 
 ---
@@ -100,14 +121,16 @@
          ↓
 第二阶段：CAN 通信精进 ───────── 附 AUTOSAR CP 概念
   ├ FlexCAN 寄存器驱动
-  ├ SocketCAN SOC 端
-  ├ CAN 信号解析 (DBC)
+  ├ MCU 端 CAN 信号解析 (DBC)
+  ├ MCU 端 UART 传输协议
+  ├ SOC 端 UART 接收 + 信号融合
   └ CAN 网络管理 (CanNm)
          ↓
 第三阶段：SOME/IP 服务通信 ──── 附 AUTOSAR AP 概念
   ├ SOME/IP 协议基础
   ├ SOME/IP 服务发现 (SD)
-  └ SOME/IP 序列化
+  ├ SOME/IP 序列化
+  └ UART → SOME/IP 联调
          ↓
 第四阶段：UDS 诊断 (后续)
 ```
@@ -128,7 +151,7 @@ s32k144-virtual-soc-domain-controller/
 │   └── AUTOSAR_学习路线图.md   ← AUTOSAR 概念对照指南
 │
 ├── config/
-│   └── domain_config.yaml     ← CAN/SOMEIP/UDS 配置
+│   └── domain_config.yaml     ← CAN/UART/SOMEIP 配置
 │
 ├── mcu/                       ← ★ MCU 端核心代码
 │   ├── s32k144_flash.ld       ← 链接脚本（共享）
@@ -137,27 +160,28 @@ s32k144-virtual-soc-domain-controller/
 │   ├── timer/                 ← 定时器模块（书籍第 7/9 章）
 │   ├── adc/                   ← ADC 模块（书籍第 8 章）
 │   ├── flexcan/               ← ★ FlexCAN 模块（书籍第 10 章）
-│   └── clock/                 ← 时钟模块（书籍第 3 章）
+│   ├── clock/                 ← 时钟模块（书籍第 3 章）
+│   └── domain_controller/     ← ★ 域控制器应用（FlexCAN + UART 联调，待实现）
 │
 ├── soc/                       ← SOC 端（TODO 骨架）
 │   ├── CMakeLists.txt
 │   ├── include/
 │   │   ├── config_manager.h   ← 配置管理器
-│   │   ├── can_manager.h      ← CAN 总线管理器
+│   │   ├── can_manager.h      ← CAN 总线管理器（调试用，可选）
+│   │   ├── uart_receiver.h    ← ★ UART 接收管理器（新增）
 │   │   └── signal_manager.h   ← 信号融合中心
 │   ├── src/
 │   │   ├── main.cpp           ← 主入口（TODO 占位）
-│   │   ├── can_manager/
-│   │   │   └── can_manager.cpp
-│   │   ├── signal_fusion/
-│   │   │   ├── config_manager.cpp
-│   │   │   └── signal_manager.cpp
-│   │   ├── someip_service/    ← SOME/IP（预留）
+│   │   ├── can_manager/       ← SocketCAN（调试用，可选）
+│   │   ├── uart_receiver/     ← ★ UART 接收（新增）
+│   │   ├── signal_fusion/     ← 信号解析与融合
+│   │   ├── someip_service/    ← SOME/IP（阶段三）
 │   │   ├── uds_server/        ← UDS 诊断（预留）
 │   │   └── web_api/           ← Web API（预留）
 │
 └── tools/
-    └── soc_build.sh           ← SOC 端构建脚本
+    ├── soc_build.sh           ← SOC 端构建脚本
+    └── mcu_flash.sh           ← MCU 烧录脚本
 ```
 
 ---
@@ -179,20 +203,18 @@ cd mcu/gpio && make
 # 按照 docs/MCU零基础学习计划.md 逐一填充 TODO
 ```
 
-### 第三步：CAN 通信学习
+### 第三步：CAN + UART 联调
 
 ```bash
-# 启动物理/虚拟 CAN
-sudo modprobe vcan
-sudo ip link add dev vcan0 type vcan
-sudo ip link set up vcan0
+# MCU 端：编译 domain_controller 应用
+cd mcu/domain_controller && make
 
-# 编译 SOC 端
+# SOC 端：编译 UART 接收 + 信号融合
 cd soc && mkdir -p build && cd build
 cmake .. && make
 
-# 监听 CAN 消息
-candump vcan0
+# SOC 端启动接收（USB-UART 接入）
+./soc_app /dev/ttyUSB0 115200
 ```
 
 ---
@@ -237,5 +259,5 @@ candump vcan0
 
 > **一句话总结**
 >
-> 从 MCU 寄存器到 SOC 服务，从 CAN 帧到 SOME/IP——逐层递进，
-> 每学一层通信就附带上层的 AUTOSAR 概念，形成完整车载通信知识体系。
+> CAN 总线 → MCU 接收解析 → UART 传输 → SOC 融合 → SOME/IP 发布。
+> 从寄存器到服务，逐层递进，学完每个模块形成完整域控制器链路。
