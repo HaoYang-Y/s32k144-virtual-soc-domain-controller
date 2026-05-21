@@ -1,0 +1,92 @@
+# =====================================================================
+# 域控制器配置文件 (YAML)
+# 定义 CAN 总线参数、信号表、UDS DID、服务器端口等
+# =====================================================================
+
+# ==================== CAN 总线配置 ====================
+can:
+  interface: "can0"          # SocketCAN 接口名称
+  bitrate: 500000            # 波特率 (500 kbps)
+
+  # ------ CAN 信号定义表 (DBC 的简化版) ------
+  # 每个信号定义一条: name/can_id/start_bit/length/endian/scale/offset/unit
+  # 示例: DBC 信号 "VehicleSpeed" (车速), CAN ID 0x100, Intel 格式
+  signals:
+    # ---- ID 0x100: 动力系统信息 ----
+    - { name: "VehicleSpeed",   can_id: 0x100, start_bit: 0,  length: 16,
+        endian: "little", scale: 0.01, offset: 0.0, unit: "km/h" }
+    - { name: "EngineRPM",      can_id: 0x100, start_bit: 16, length: 16,
+        endian: "little", scale: 0.125, offset: 0.0, unit: "rpm" }
+    - { name: "AcceleratorPedal", can_id: 0x100, start_bit: 32, length: 8,
+        endian: "little", scale: 0.4, offset: 0.0, unit: "%" }
+    - { name: "BrakePosition",    can_id: 0x100, start_bit: 40, length: 8,
+        endian: "little", scale: 0.4, offset: 0.0, unit: "%" }
+
+    # ---- ID 0x200: 车身状态 ----
+    - { name: "SteeringAngle", can_id: 0x200, start_bit: 0,  length: 16,
+        endian: "little", scale: 0.1, offset: -780.0, unit: "deg" }
+    - { name: "YawRate",       can_id: 0x200, start_bit: 16, length: 16,
+        endian: "little", scale: 0.01, offset: -327.68, unit: "deg/s" }
+    - { name: "LongitudinalAccel", can_id: 0x200, start_bit: 32, length: 16,
+        endian: "little", scale: 0.01, offset: -10.0, unit: "m/s²" }
+
+    # ---- ID 0x300: 环境感知 (ADC/GPIO 模拟) ----
+    - { name: "AmbientTemp",   can_id: 0x300, start_bit: 0, length: 16,
+        endian: "little", scale: 0.1, offset: -40.0, unit: "°C" }
+    - { name: "BatteryVoltage", can_id: 0x300, start_bit: 16, length: 16,
+        endian: "little", scale: 0.001, offset: 0.0, unit: "V" }
+    - { name: "DoorStatus",    can_id: 0x300, start_bit: 32, length: 4,
+        endian: "little", scale: 1.0, offset: 0.0, unit: "" }
+
+# ==================== UDS 诊断配置 (ISO 14229) ====================
+uds:
+  dids:
+    # 0x10XX: 电控单元标识
+    - { did: "0xF190", name: "BootSoftwareVersion", length: 16, unit: "-"}
+    - { did: "0xF191", name: "ApplicationSoftwareVersion", length: 16, unit: "-"}
+
+    # 0x22XX: 数据记录
+    - { did: "0xF18C", name: "VinNumber",        length: 17, unit: "-" }
+    - { did: "0xF1A0", name: "ECU_HardwareNumber", length: 16, unit: "-"}
+
+# ==================== SOME/IP 服务配置 ====================
+# 参考 AUTOSAR PSS (Proxy/Skeleton Service) 规范
+# Service ID / Method ID / Event ID 分配遵循 AUTOSAR 规范
+someip:
+  # ---- 基础服务: 车速/转速/车身状态 ----
+  - service_id: 0x0A00
+    service_name: "VehicleDataService"
+    version: { major: 1, minor: 0 }
+    methods:
+      - { method_id: 0x01, name: "GetVehicleSpeed",   type: "request_response" }
+      - { method_id: 0x02, name: "GetEngineRPM",       type: "request_response" }
+      - { method_id: 0x03, name: "GetBatteryVoltage",  type: "request_response" }
+    events:
+      - { event_id: 0x8001, name: "VehicleSpeedEvent", cycle_ms: 100 }
+      - { event_id: 0x8002, name: "EngineRPMEvent",    cycle_ms: 100 }
+    fields:
+      - { field_id: 0x01, name: "BrakePosition", getter: true, setter: false }
+
+  # ---- 环境感知服务: ADC 模拟量采集 ----
+  - service_id: 0x0A01
+    service_name: "EnvironmentSensorService"
+    version: { major: 1, minor: 0 }
+    methods:
+      - { method_id: 0x01, name: "GetAmbientTemp",   type: "request_response" }
+      - { method_id: 0x02, name: "GetDoorStatus",    type: "request_response" }
+    events:
+      - { event_id: 0x8101, name: "TemperatureChangeEvent", cycle_ms: 500 }
+      - { event_id: 0x8102, name: "DoorStatusChangeEvent",  cycle_ms: 200 }
+
+  # ---- 诊断服务: 预留 UDS 映射 ----
+  - service_id: 0xFF01
+    service_name: "DiagService"
+    version: { major: 1, minor: 0 }
+    methods:
+      - { method_id: 0x01, name: "ReadDID",    type: "request_response" }
+      - { method_id: 0x02, name: "WriteDID",   type: "request_response" }
+
+# ==================== 服务器配置 ====================
+server:
+  someip_port: 30490         # SOME/IP UDP 端口 (AUTOSAR 默认 30490)
+  log_level: "debug"         # trace/debug/info/warn/error
