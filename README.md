@@ -1,6 +1,6 @@
 # s32k144-virtual-soc-domain-controller — 基于 S32K144 与虚拟 SOC 的域控制器学习工程
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/MCU-S32K144-blue)](.)
 [![Build](https://img.shields.io/badge/Build-Makefile%20%7C%20CMake-green)](.)
 [![GitHub Stars](https://img.shields.io/github/stars/HaoYang-Y/s32k144-virtual-soc-domain-controller?style=social)](https://github.com/HaoYang-Y/s32k144-virtual-soc-domain-controller)
@@ -143,7 +143,7 @@
 s32k144-virtual-soc-domain-controller/
 │
 ├── README.md                  ← 项目说明
-├── LICENSE                    ← MIT 开源协议
+├── LICENSE                    ← Apache 2.0 开源协议
 ├── Dockerfile                 ← Docker 开发环境（可选）
 │
 ├── docs/
@@ -253,7 +253,8 @@ cmake .. && make
 
 ## 📄 License
 
-本项目采用 MIT 协议开源 — 详见 [LICENSE](LICENSE) 文件。
+本项目采用 **Apache 2.0** 协议开源，详见 [LICENSE](LICENSE) 文件。
+衍生作品须保留 [NOTICE](NOTICE) 文件中的出处声明（包含本项目的 GitHub 地址）。
 
 ---
 
