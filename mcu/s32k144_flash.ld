@@ -26,7 +26,15 @@ SECTIONS
         . = ALIGN(4);
     } > FLASH
 
-    /* 代码段 */
+    /* Flash 配置字 — 必须位于 0x400-0x40F（紧接在 1KB 向量表之后）
+     * 放在 .text 之前以保证地址正确性，
+     * 固定地址会强制 location counter 跳过 0xC0~0x3FF 的保留区域 */
+    .flash_config (0x400) :
+    {
+        KEEP(*(.flash_config))
+    } > FLASH
+
+    /* 代码段 — 紧跟在 .flash_config 之后（0x410 起）*/
     .text :
     {
         . = ALIGN(4);
@@ -99,6 +107,5 @@ SECTIONS
         *(.ARM.exidx*)
         *(.ARM.attributes*)
         *(.comment)
-        *(.debug*)
     }
 }
