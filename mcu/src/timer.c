@@ -19,7 +19,7 @@
  *         - TVAL0~3:  通道定时值
  *         - SET_T_EN_0~3: 通道启动寄存器
  */
-#include "timer_driver.h"
+#include "timer.h"
 
 /* ========== 全局变量 ========== */
 

@@ -9,7 +9,7 @@
  *       寄存器布局见 docs 第4篇，位时序计算见第2篇，
  *       发送流程见第6篇，接收流程见第7篇。
  */
-#include "flexcan_driver.h"
+#include "flexcan.h"
 
 #include <stddef.h>    /* NULL */
 

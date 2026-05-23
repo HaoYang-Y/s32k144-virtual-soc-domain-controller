@@ -1,6 +1,6 @@
 # =====================================================================
-# FlexCAN 模块 — S32K144 CAN 通信驱动练习
-# 对应书籍：第11章 CAN 总线
+# MCU 统一 Makefile — S32K144 全部驱动模块
+# 基于 NXP S32 SDK for S32K1xx (RTM 4.0.2)
 # =====================================================================
 CC      = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy
@@ -9,25 +9,41 @@ SIZE    = arm-none-eabi-size
 MCU     = cortex-m4
 FPU     = -mfloat-abi=soft
 
+# ---------- SDK 路径 ----------
+SDK_DIR         := S32_SDK_S32K1xx_RTM_4.0.2
+SDK_DEVICES     := $(SDK_DIR)/platform/devices
+SDK_DRIVERS_INC := $(SDK_DIR)/platform/drivers/inc
+
+# ---------- 编译标志 ----------
 CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
 CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
-CFLAGS += -O2 -g
+CFLAGS += -O0 -g3
 CFLAGS += -ffunction-sections -fdata-sections
-CFLAGS += -I. -I./include
+CFLAGS += -I./include
+CFLAGS += -I$(SDK_DEVICES)
+CFLAGS += -I$(SDK_DEVICES)/S32K144
+CFLAGS += -I$(SDK_DRIVERS_INC)
 
+# ---------- 链接标志 ----------
 LDFLAGS = -mcpu=$(MCU) $(FPU) -mthumb
-LDFLAGS += -T ../s32k144_flash.ld
+LDFLAGS += -T s32k144_flash.ld
 LDFLAGS += -Wl,--gc-sections -Wl,-Map=output.map
 LDFLAGS += -specs=nano.specs -specs=nosys.specs
 
-SRCS  = src/main.c
-SRCS += src/flexcan_driver.c
+# ---------- 源文件 ----------
+SRCS  = src/gpio.c
+SRCS += src/adc.c
+SRCS += src/clock.c
+SRCS += src/timer.c
+SRCS += src/uart.c
+SRCS += src/flexcan.c
 
-OBJS  = $(SRCS:.c=.o)
-TARGET = flexcan_demo.elf
+OBJS   = $(SRCS:.c=.o)
+TARGET = mcu_demo.elf
 HEX    = $(TARGET:.elf=.hex)
 BIN    = $(TARGET:.elf=.bin)
 
+# ---------- 目标 ----------
 .PHONY: all clean flash
 
 all: $(TARGET) $(HEX) $(BIN)
@@ -49,5 +65,6 @@ flash: $(HEX)
 	@echo "[FLASH] 使用 J-Link 烧录 $< ..."
 	printf "loadfile %s\nr\ng\nq\n" "$<" | \
 	JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
+
 clean:
 	rm -f $(OBJS) $(TARGET) $(HEX) $(BIN) output.map

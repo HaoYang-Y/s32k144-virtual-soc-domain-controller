@@ -19,7 +19,7 @@
  *       时钟门控 (PCC 模块)：
  *         - PCC_PORTCn: PORT 时钟使能寄存器
  */
-#include "gpio_driver.h"
+#include "gpio.h"
 #include <stddef.h>
 
 /* ========== 寄存器结构体定义 ========== */

@@ -15,7 +15,7 @@
  *         - GLOBAL: 全局控制 (RST)
  *         - FILT:  滤波控制
  */
-#include "uart_driver.h"
+#include "uart.h"
 
 /* ========== 寄存器结构体定义 ========== */
 
