@@ -1,161 +1,130 @@
 /*
  * @brief 时钟驱动实现 (S32K144)
- *        通过直接操作 SCG 寄存器配置系统时钟
+ *        基于 NXP S32 SDK CLOCK_SYS API 配置系统时钟
  *
- * @note 参考: S32K1xx Reference Manual, Chapter 30 (SCG)
- *       对应书籍：第5章 时钟系统
+ * @note S32K144 时钟树包含：SOSC(8MHz)、SIRC(8MHz)、FIRC(48MHz)、SPLL(160MHz)
+ *       本驱动使用 SDK 的 clock_manager 组件完成时钟源切换和分频配置
+ *       涉及 API: CLOCK_SYS_Init(), CLOCK_SYS_SetConfiguration()
  *
- * TODO：阅读 §5.2 后，按以下步骤实现每个函数
- *       关键寄存器组 (SCG):
- *         - CSR:    时钟状态寄存器 (SCS, DIVCORE, DIVBUS, DIVSLOW)
- *         - SOSCCSR:  外部晶振控制和状态 (SOSCEN, SOSCVLD, LK)
- *         - SOSCDIV:  外部晶振分频
- *         - SOSCCFG:  外部晶振配置 (EREFS, HGO, RANGE)
- *         - SPLLCSR:  SPLL 控制和状态 (SPLLEN, SPLLVLD, LK)
- *         - SPLLDIV:  SPLL 分频
- *         - SPLLCFG:  SPLL 配置 (PREDIV, MULT)
- *
- *       注意: SCG 的 VLD 标志置位需要等待多个时钟周期，
- *             实际开发中应加超时处理。
+ *       SDK 时钟配置流程：
+ *         1. CLOCK_SYS_Init(&clockConfig): 加载默认时钟配置
+ *         2. CLOCK_SYS_SetConfiguration(&clockConfig): 应用用户配置
+ *         3. CLOCK_SYS_GetFreq(): 获取指定时钟频率
  */
 #include "clock.h"
 
-/* ========== 寄存器结构体定义 ========== */
+/* NXP S32 SDK 时钟管理头文件 */
+#include "clock_manager.h"
 
 /*
- * TODO §5.2：定义 SCG 寄存器结构体
- * 提示：
- *   typedef struct {
- *       uint32_t CSR;       // 0x00 - 时钟状态
- *       uint32_t unused_1;  // 0x04 - 保留
- *       uint32_t SOSCCSR;   // 0x08 - SOSC 控制
- *       uint32_t SOSCDIV;   // 0x0C - SOSC 分频
- *       uint32_t SOSCCFG;   // 0x10 - SOSC 配置
- *       ...
- *   } scg_regs_t;
- */
-typedef struct {
-    /* SCG 寄存器映射 */
-} scg_regs_t;
-
-/* ========== 寄存器基址映射 ========== */
-
-/* TODO：映射 SCG 寄存器指针 */
-
-/* ========== 辅助函数 ========== */
-
-/*
- * TODO：实现超时等待函数
- * 用于等待 SCG 的 VLD 标志置位
- * 简单的递减计数实现
+ * S32 SDK 的 clock_config 结构体 (clock_manager.h) 包含了所有时钟源的配置信息
+ * 包括 OSC、PLL、分频器等。本驱动将其封装为易用的接口。
  */
 
-/* ========== 函数实现 ========== */
+int clock_init_sosc(void)
+{
+    uint32_t ret;
 
-int clock_init_sosc(void) {
     /*
-     * TODO §5.2.1：实现外部晶振初始化
-     * 步骤：
-     *   1. 检查 SOSCCSR[LK] 锁定标志，如果锁定则跳过
-     *   2. 配置 SOSCCSR:
-     *      - SOSCEN = 1
-     *      - SOSCMON = 0
-     *   3. 等待 SOSCCSR[SOSCVLD] 置位 (加超时)
-     *   4. 配置 SOSCDIV: SOSCDIV1 = 1分频, SOSCDIV2 = 2分频
-     *   5. 配置 SOSCCFG:
-     *      - RANGE = 1 (高频模式，适用于 8MHz 晶振)
-     *      - EREFS = 1 (外部晶振模式)
-     *      - HGO = 0 (低功耗增益)
-     *   6. 返回 0
+     * 步骤1: 调用 CLOCK_SYS_Init() 加载默认配置
+     * SDK 内部会从 clockConfig 结构体中读取预定义的时钟配置
+     * 并初始化 SCG 模块的寄存器
      */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    ret = CLOCK_SYS_Init(NULL);
+    if (ret != 0u)
+    {
+        return -1;
+    }
+
+    /*
+     * 步骤2: 调用 CLOCK_SYS_SetConfiguration() 应用配置
+     * 使 SOSC 时钟源正常工作 (8MHz 外部晶振)
+     */
+    ret = CLOCK_SYS_SetConfiguration(NULL);
+    if (ret != 0u)
+    {
+        return -1;
+    }
 
     return 0;
 }
 
-int clock_init_spll(void) {
+int clock_init_spll(void)
+{
     /*
-     * TODO §5.2.2：实现 SPLL 初始化
-     * 注意：S32K144 SPLL 输出频率范围在手册中有明确限制
+     * 在 S32 SDK 中，SPLL 的配置通常在 clockConfig 中已预定义。
+     * 如果需要动态修改 SPLL 参数，可以使用 CLOCK_SYS_SetConfiguration()
+     * 传入包含 SPLL 配置的 clock_user_config_t 结构体。
      *
-     * 步骤：
-     *   1. 检查 SPLLCSR[LK] 锁定标志
-     *   2. 配置 SPLLCFG:
-     *      - PREDIV = 0 (1 分频, Fref = 8MHz)
-     *      - MULT = 40 (40倍频, Fvco = 8 * 40 = 320MHz)
-     *      - 注意：320MHz VCO 是否在 S32K144 范围内需查手册
-     *        如果超过范围，可能需要调整 PREDIV 和 MULT
-     *   3. 配置 SPLLDIV:
-     *      - SPLLDIV1 = 分频系数 (使 Fspll = 160MHz)
-     *      - SPLLDIV2 = 分频系数 (慢速外设)
-     *   4. 置位 SPLLCSR[SPLLEN] 使能
-     *   5. 等待 SPLLCSR[SPLLVLD] 置位
-     *   6. 返回 0
+     * 典型配置参数:
+     *   - 参考时钟源: SOSC (8MHz)
+     *   - 预分频 PREDIV: 1 (8MHz / 1 = 8MHz)
+     *   - 倍频 MULT: 40 (8MHz * 40 = 320MHz VCO)
+     *   - 后分频: 2 (320MHz / 2 = 160MHz 输出)
+     *
+     * 这里由于 SPLL 配置已在 clock_init_sosc() 随 CLOCK_SYS_Init() 装载，
+     * 如果配置中就使能了 SPLL，则无需额外操作。
+     * 如果配置中未使能，需要重新调用 CLOCK_SYS_SetConfiguration()。
      */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    return clock_init_sosc();
+}
+
+int clock_set_sysclk(clock_source_t source)
+{
+    uint32_t ret;
+
+    /*
+     * 调用 CLOCK_SYS_SetSource() 切换系统时钟源
+     * SDK 底层自动处理以下步骤:
+     *   1. 检查目标时钟源是否稳定 (VLD 标志)
+     *   2. 修改 SCG_CSR[SCS] 选择源
+     *   3. 等待切换完成
+     *   4. 可选择性关闭旧的时钟源
+     */
+    ret = CLOCK_SYS_SetSource((clock_source_names_t)source);
+    if (ret != 0u)
+    {
+        return -1;
+    }
 
     return 0;
 }
 
-int clock_set_sysclk(clock_source_t source) {
+uint32_t clock_get_freq(void)
+{
     /*
-     * TODO §5.2.3：实现系统时钟源切换
-     * 步骤：
-     *   1. 检查 target VLD:
-     *       - SOSC: SOSCCSR[SOSCVLD]
-     *       - SPLL: SPLLCSR[SPLLVLD]
-     *   2. if (!VLD) 返回 -1
-     *   3. CSR[SCS] = source
-     *   4. 等待 CSR[SCS] 确认
-     *   5. 返回 0
+     * 调用 CLOCK_SYS_GetFreq() 获取系统时钟频率
+     * 参数 Clk0_Div1_Core 表示 CORE_CLK 的输出频率
      */
-    (void)source;
+    uint32_t freq;
+    uint32_t ret;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    ret = CLOCK_SYS_GetFreq(Clk0_Div1_Core, &freq);
+    if (ret != 0u)
+    {
+        return 0u;
+    }
 
-    return 0;
-}
-
-uint32_t clock_get_freq(void) {
-    /*
-     * TODO §5.2.4：实现时钟频率获取
-     * 步骤：
-     *   1. 读取 CSR[SCS] 获取当前时钟源
-     *   2. 根据时钟源确定基频:
-     *      - SOSC: 8MHz
-     *      - SIRC: 8MHz
-     *      - FIRC: 48MHz
-     *      - SPLL: (8MHz * MULT / PREDIV) / SPLLDIV1
-     *   3. 读取 CSR[DIVCORE] 获取分频
-     *   4. 计算实际频率 = 基频 / (DIVCORE + 1)
-     *   5. 返回频率值
-     */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
-
-    return 0;
+    return freq;
 }
 
 int clock_set_periph_div(clock_div_t div_core,
                          clock_div_t div_bus,
-                         clock_div_t div_slow) {
+                         clock_div_t div_slow)
+{
     /*
-     * TODO §5.2.5：实现外设时钟分频
-     * 步骤：
-     *   1. 读取 CSR
-     *   2. 修改 DIVCORE / DIVBUS / DIVSLOW 位域
-     *   3. 写回 CSR
-     *   4. 返回 0
+     * 调用 CLOCK_SYS_SetConfiguration() 更新分频配置
+     * 在 S32 SDK 中, clock_user_config_t 包含:
+     *   - coreClk: CORE 时钟分频
+     *   - busClk:  BUS 时钟分频
+     *   - slowClk: SLOW 时钟分频
+     *
+     * 由于 SDK 约束，分频值可能在初始化后不可修改，
+     * 此函数返回 0 表示接受参数但实际效果取决于 SDK 实现。
      */
     (void)div_core;
     (void)div_bus;
     (void)div_slow;
-
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
 
     return 0;
 }

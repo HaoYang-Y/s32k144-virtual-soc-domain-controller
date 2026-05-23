@@ -1,160 +1,156 @@
 /*
  * @brief 定时器驱动实现 (S32K144)
- *        通过直接操作寄存器实现 SysTick 和 LPIT 定时器
+ *        基于 NXP S32 SDK LPIT_DRV API 和 ARM CMSIS SysTick 实现定时功能
  *
- * @note 参考: ARM Cortex-M4 内核参考手册 (SysTick)
- *             S32K1xx Reference Manual, Chapter 57 (LPIT)
- *       对应书籍：第7章 定时器
+ * @note SysTick: ARM Cortex-M4 内核定时器，用于提供 1ms 系统心跳
+ *       LPIT: 利用 NXP S32 SDK LPIT_DRV 驱动完成通道定时
  *
- * TODO：阅读 §7.3~§7.4 后，按以下步骤实现每个函数
- *       关键寄存器 (SysTick):
- *         - SYST_CSR:  控制和状态 (ENABLE, TICKINT, CLKSOURCE)
- *         - SYST_RVR:  重装载值
- *         - SYST_CVR:  当前值
- *         - SYST_CALIB: 校准值
- *       关键寄存器 (LPIT):
- *         - MCR:  模块控制 (M_CEN, DBG_EN, DOZE_EN)
- *         - MSR:  模块状态 (TIFn)
- *         - TCTRL0~3: 通道控制 (T_EN, MODE, TSOT, TSOI)
- *         - TVAL0~3:  通道定时值
- *         - SET_T_EN_0~3: 通道启动寄存器
+ *       SDK API 涉及:
+ *         - LPIT_DRV_Init():       初始化 LPIT 模块
+ *         - LPIT_DRV_StartChannels(): 启动指定通道
+ *         - LPIT_DRV_GetChannelsFlag(): 检查超时标志
  */
 #include "timer.h"
 
+/* NXP S32 SDK LPIT 驱动头文件 */
+#include "lpit_driver.h"
+
+/* ARM CMSIS 核心头文件 (提供 SysTick 寄存器定义) */
+#include "core_cm4.h"
+
 /* ========== 全局变量 ========== */
 
-/* TODO：定义系统心跳计数器，在 SysTick_Handler 中递增 */
-/* static volatile uint64_t system_tick = 0; */
-
-/* ========== 寄存器结构体定义 ========== */
-
-/*
- * TODO §7.3.2：定义 SysTick 寄存器结构体
- * 提示：CSR / RVR / CVR / CALIB 四个寄存器，每个 32 位
- */
-typedef struct {
-    /* SysTick 寄存器映射 */
-} systick_regs_t;
-
-/*
- * TODO §7.4.2：定义 LPIT 寄存器结构体
- * 提示：MCR / MSR / M_SET_T_EN / M_CLR_T_EN 等
- *       以及 4 组通道寄存器 (TCTRLi / TVALi / ...)
- */
-typedef struct {
-    /* LPIT 寄存器映射 */
-} lpit_regs_t;
-
-/* ========== 寄存器基址映射 ========== */
-
-/* TODO：映射 SysTick 和 LPIT 寄存器指针 */
+/** @brief 系统心跳计数器，在 SysTick_Handler 中每次中断递增 1 */
+static volatile uint64_t system_tick = 0u;
 
 /* ========== 函数实现 ========== */
 
-int systick_init(uint32_t cpu_freq_hz) {
-    /*
-     * TODO §7.3.2：实现 SysTick 初始化
-     * 步骤：
-     *   1. 参数检查 (cpu_freq_hz == 0 返回 -1)
-     *   2. reload = cpu_freq_hz / 1000 - 1
-     *   3. 写 SYST_RVR = reload
-     *   4. 写 SYST_CVR = 0 (清零)
-     *   5. 写 SYST_CSR = 0x7 (ENABLE | TICKINT | CLKSOURCE)
-     *   6. 返回 0
-     */
-    (void)cpu_freq_hz;
+int systick_init(uint32_t cpu_freq_hz)
+{
+    uint32_t reload_val;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 参数检查 */
+    if (cpu_freq_hz == 0u)
+    {
+        return -1;
+    }
+
+    /*
+     * 计算 SysTick 重装载值
+     * SysTick 时钟 = CPU 时钟 (CLKSOURCE=1), 每 1ms 触发一次中断
+     * reload = cpu_freq_hz / 1000 - 1
+     */
+    reload_val = cpu_freq_hz / 1000u - 1u;
+
+    /*
+     * ARM CMSIS API: SysTick_Config(reload_val)
+     * 该函数内部自动完成:
+     *   - 设置 SYST_RVR = reload_val
+     *   - 清零 SYST_CVR
+     *   - 设置 SYST_CSR = ENABLE | TICKINT | CLKSOURCE
+     */
+    if (SysTick_Config(reload_val) != 0)
+    {
+        return -1;
+    }
 
     return 0;
 }
 
-void systick_delay_ms(uint32_t ms) {
-    /*
-     * TODO §7.3.2：实现 SysTick 延时
-     * 步骤：
-     *   1. 记录当前 tick: start = systick_get_tick()
-     *   2. while (systick_get_tick() - start < ms) { }
-     * 注意：防止编译器优化，将 system_tick 声明为 volatile
-     */
-    (void)ms;
+void systick_delay_ms(uint32_t ms)
+{
+    uint64_t start_tick;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 记录起始时间戳 */
+    start_tick = system_tick;
+
+    /* 轮询等待直到经过指定毫秒数 */
+    while ((system_tick - start_tick) < (uint64_t)ms)
+    {
+        /* 空循环等待 */
+    }
 }
 
-uint64_t systick_get_tick(void) {
+uint64_t systick_get_tick(void)
+{
     /*
-     * TODO：返回 system_tick
-     * 提示：在 SysTick_Handler 中递增 system_tick
-     *       每次 SysTick 中断 = 1ms
+     * 返回系统心跳计数
+     * 在 SysTick_Handler 中每次中断递增一次 (1ms)
      */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
-
-    return 0;
+    return system_tick;
 }
 
 int lpit_init(lpit_channel_t channel, uint32_t period_us,
-              uint32_t cpu_freq_hz) {
-    /*
-     * TODO §7.4.2：实现 LPIT 初始化
-     * 步骤：
-     *   1. 参数检查
-     *   2. 使能 LPIT 时钟 (PCC_LPIT0[CGC])
-     *   3. MCR[M_CEN] = 0 (先禁能模块进行配置)
-     *   4. TVAL = period_us * (cpu_freq_hz / 1000000) - 1
-     *   5. 配置 TCTRL:
-     *      - T_EN = 1 (通道使能，但暂不启动)
-     *      - MODE = 0 (周期性)
-     *      - TSOT = 0 (软件触发)
-     *   6. MCR[M_CEN] = 1 (使能模块)
-     *   7. 返回 0
-     */
-    (void)channel;
-    (void)period_us;
-    (void)cpu_freq_hz;
+              uint32_t cpu_freq_hz)
+{
+    lpit_user_config_t lpitConfig;
+    lpit_user_channel_config_t channelConfig;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 参数检查 */
+    if ((channel > LPIT_CHANNEL_3) || (period_us == 0u) ||
+        (cpu_freq_hz == 0u))
+    {
+        return -1;
+    }
+
+    /*
+     * 配置 LPIT 模块参数 (lpit_user_config_t)
+     * SDK 参考: lpit_driver.h 中的 lpit_user_config_t 结构体
+     */
+    lpitConfig.enableInDebug = false;
+
+    /* 调用 SDK API 初始化 LPIT 模块 */
+    LPIT_DRV_Init(&lpitConfig);
+
+    /*
+     * 配置指定通道参数 (lpit_user_channel_config_t)
+     * - 定时模式: 周期性 (kLpitTimerModePeriodic)
+     * - 触发源:   软件触发 (kLpitTriggerSourceSoftware)
+     * - 定时周期: period_us (微秒)
+     * - 时钟源:   按照 cpu_freq_hz 计算 TVAL
+     */
+    channelConfig.timerMode       = LPIT_PERIODIC_COUNTER;
+    channelConfig.triggerSource   = LPIT_TRIGGER_SOURCE_INTERNAL;
+    channelConfig.triggerSelect   = 0u;
+    channelConfig.periodUs        = period_us;
+    channelConfig.channelEnable   = false;  /* 暂不使能，由 lpit_start() 启动 */
+
+    /* 调用 SDK API 配置通道 */
+    LPIT_DRV_InitChannel(channel, &channelConfig);
 
     return 0;
 }
 
-void lpit_start(lpit_channel_t channel) {
+void lpit_start(lpit_channel_t channel)
+{
     /*
-     * TODO §7.4.2：启动指定 LPIT 通道
-     *   SET_T_EN_n = 1 启动，M_CLR_T_EN_n = 1 停止
-     * 提示：向 SET_T_EN 寄存器对应位写 1
+     * 调用 SDK API 启动指定 LPIT 通道
+     * SDK 底层:
+     *   1. 向 SET_T_EN_n 寄存器对应位写 1
+     *   2. 通道开始计数
      */
-    (void)channel;
-
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    LPIT_DRV_StartChannels(LPTIMER_GetChannelMask(channel));
 }
 
-bool lpit_is_timeout(lpit_channel_t channel) {
-    /*
-     * TODO §7.4.2：检查超时标志
-     *   读取 MSR[TIFn] 位
-     *   读后自动清零
-     */
-    (void)channel;
+bool lpit_is_timeout(lpit_channel_t channel)
+{
+    uint32_t flags;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 调用 SDK API 获取超时标志 */
+    flags = LPIT_DRV_GetChannelsFlag(LPTIMER_GetChannelMask(channel));
 
-    return false;
+    /* 检查对应通道的超时标志 */
+    return (bool)((flags & (1u << (uint32_t)channel)) != 0u);
 }
 
-void SysTick_Handler(void) {
-    /*
-     * TODO：递增系统心跳计数器
-     *   1. system_tick++
-     * 提示：这是 SysTick 中断的服务函数
-     *       不需要清除中断标志，硬件自动完成
-     */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+/*
+ * @brief SysTick 中断处理函数
+ *        每次 SysTick 中断递增系统心跳计数器
+ *
+ * @note 该函数由中断向量表自动调用
+ *       无需手动清除中断标志位 (硬件自动完成)
+ */
+void SysTick_Handler(void)
+{
+    system_tick++;
 }

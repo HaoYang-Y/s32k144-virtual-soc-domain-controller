@@ -1,117 +1,153 @@
 /*
  * @brief UART 驱动实现 (S32K144)
- *        通过直接操作寄存器实现 LPUART 串口收发
+ *        基于 NXP S32 SDK UART_DRV API 实现串口收发
  *
- * @note 参考: S32K1xx Reference Manual, Chapter 53 (LPUART)
- *       对应书籍：第6章 串口通信
+ * @note 本驱动封装 NXP S32 SDK 的 LPUART 驱动层 API
  *
- * TODO：阅读 §6.2 后，按以下步骤实现每个函数
- *       关键寄存器：
- *         - BAUD:  波特率控制 (SBR[12:0], OSR[4:0])
- *         - STAT:  状态寄存器 (TDRE, RDRF, FE, NF)
- *         - CTRL:  控制寄存器 (TE, RE, PE, PT, M)
- *         - DATA:  数据寄存器
- *         - MODIR: 调制控制
- *         - GLOBAL: 全局控制 (RST)
- *         - FILT:  滤波控制
+ *       SDK API 涉及:
+ *         - UART_DRV_Init():            初始化 UART 模块
+ *         - UART_DRV_SendDataBlocking(): 阻塞发送
+ *         - UART_DRV_ReceiveDataBlocking(): 阻塞接收
+ *
+ *       SDK 配置结构体:
+ *         - uart_user_config_t:  包含波特率、数据位、校验、停止位等
  */
 #include "uart.h"
 
-/* ========== 寄存器结构体定义 ========== */
+/* NXP S32 SDK UART 驱动头文件 */
+#include "lpuart_driver.h"
 
-/*
- * TODO §6.2.2：定义 LPUART 寄存器结构体
- * 提示：包含 BAUD / STAT / CTRL / DATA / MODIR / GLOBAL / ...
- * 参考手册 LPUART 寄存器列表
+/* NXP S32 SDK 引脚复用头文件 */
+#include "pins_driver.h"
+
+/* ========== 引脚映射表 ========== */
+
+/**
+ * @brief UART 通道对应的引脚配置
+ *        S32K144 EVB 默认引脚分配:
+ *        - LPUART0: PTB16(RXD) / PTB17(TXD), MUX=3 (ALT3)
+ *        - LPUART1: PTC6(RXD)  / PTC7(TXD),  MUX=7 (ALT7)
+ *        - LPUART2: PTD2(RXD)  / PTD3(TXD),  MUX=7 (ALT7)
  */
-typedef struct {
-    /* LPUART 寄存器映射 */
-} lpuart_regs_t;
-
-/* ========== 寄存器基址映射 ========== */
-
-/* TODO：将 3 个 LPUART 通道的基地址映射为 lpuart_regs_t* 指针数组 */
-/* TODO：LPUART0/LPUART1/LPUART2 的 PCI 功能选择（PCR MUX）引脚号 */
-/* 提示：通常 LPUART0 使用 PTB16(RXD)/PTB17(TXD)，MUX=3 */
-/* 提示：先查开发板原理图确认具体引脚 */
+static const uint8_t uart_rxd_pin[] = {16u, 6u, 2u};   /* RXD 引脚号 */
+static const uint8_t uart_txd_pin[] = {17u, 7u, 3u};   /* TXD 引脚号 */
+static const uint32_t uart_port_base[] = {
+    0x4007C000u, /* PORTB 基址 */
+    0x4007E000u, /* PORTC 基址 */
+    0x40080000u  /* PORTD 基址 */
+};
 
 /* ========== 函数实现 ========== */
 
 int uart_init(uart_channel_t channel, uint32_t baudrate,
               uart_data_bits_t data_bits, uart_parity_t parity,
-              uart_stop_bits_t stop_bits) {
-    /*
-     * TODO §6.2.3：实现 UART 初始化
-     * 步骤：
-     *   1. 参数检查
-     *   2. 使能 LPUART 时钟 (PCC_LPUARTn[CGC])
-     *   3. LPUART 软件复位: GLOBAL[RST] = 1, 然后清 0
-     *   4. 配置波特率 BAUD 寄存器:
-     *      - SBR[12:0] = 时钟 / (OSR * 波特率)
-     *      - OSR[4:0]  = 15 (过采样率)
-     *   5. 配置 CTRL 寄存器:
-     *      - M:  数据位 (8 位/7 位)
-     *      - PE: 校验使能
-     *      - PT: 校验类型 (偶/奇)
-     *   6. 配置停止位: BAUD[SBNS] = 1 表示 2 位停止位
-     *   7. 使能发送器 CTRL[TE] = 1
-     *   8. 使能接收器 CTRL[RE] = 1
-     *   9. 配置引脚复用为 LPUART 功能 (PORT PCR)
-     *   10. 返回 0
-     */
-    (void)channel;
-    (void)baudrate;
-    (void)data_bits;
-    (void)parity;
-    (void)stop_bits;
+              uart_stop_bits_t stop_bits)
+{
+    uart_user_config_t uartConfig;
+    uint32_t port;
+    uint32_t mux_val;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 参数检查 */
+    if ((channel > UART_CHANNEL_2) || (baudrate == 0u))
+    {
+        return -1;
+    }
+
+    /*
+     * 步骤1: 配置引脚复用为 LPUART 功能
+     * 使用 SDK 的 PINS_DRV_SetMuxModeSel() 设置 PORT PCR
+     *
+     * SDK API: PINS_DRV_SetMuxModeSel(portBase, pin, muxMode)
+     *  - portBase: PORT 模块基地址
+     *  - pin:    引脚号
+     *  - muxMode: 复用功能选择 (ALT3 / ALT7)
+     */
+    port = uart_port_base[channel];
+
+    /* LPUART0 使用 ALT3, LPUART1/2 使用 ALT7 */
+    mux_val = (channel == 0u) ? 3u : 7u;
+
+    /* 配置 RXD 引脚 */
+    PINS_DRV_SetMuxModeSel((PORT_Type *)port,
+                           uart_rxd_pin[channel],
+                           mux_val);
+    /* 配置 TXD 引脚 */
+    PINS_DRV_SetMuxModeSel((PORT_Type *)port,
+                           uart_txd_pin[channel],
+                           mux_val);
+
+    /*
+     * 步骤2: 配置 UART 参数 (uart_user_config_t)
+     * 使用 SDK 的默认配置作为基础
+     */
+    UART_DRV_GetDefaultConfig(&uartConfig);
+    uartConfig.baudRate    = baudrate;
+    uartConfig.bitCountPerChar = (uint8_t)data_bits;
+    uartConfig.parityMode  = (uint8_t)parity;
+    uartConfig.stopBitCount = (uint8_t)stop_bits;
+    uartConfig.enableRx    = true;
+    uartConfig.enableTx    = true;
+    uartConfig.enableRxRdy = true;    /* 使能接收中断 */
+    uartConfig.rxDMA       = false;   /* 不使能 DMA */
+    uartConfig.txDMA       = false;
+
+    /*
+     * 步骤3: 调用 SDK API 初始化 LPUART 模块
+     * SDK 内部自动完成:
+     *   1. 使能 PCC_LPUARTn 时钟
+     *   2. 配置 BAUD 寄存器 (SBR, OSR, SBNS)
+     *   3. 配置 CTRL 寄存器 (M, PE, PT, TE, RE)
+     *   4. 配置 MODIR 寄存器
+     */
+    UART_DRV_Init((uint32_t)channel, &uartConfig);
 
     return 0;
 }
 
-void uart_putchar(uart_channel_t channel, char ch) {
+void uart_putchar(uart_channel_t channel, char ch)
+{
     /*
-     * TODO §6.2.3：实现 UART 发送
-     * 步骤：
-     *   1. 等待 STAT[TDRE] = 1 (发送数据寄存器空)
-     *   2. 写入 DATA 寄存器 (ch)
-     * 提示：TDRE 是发送缓冲区可写标志
+     * 调用 SDK API 阻塞发送单个字符
+     * SDK 内部自动处理:
+     *   1. 等待 STAT[TDRE] = 1
+     *   2. 写入 DATA 寄存器
+     *   3. 等待发送完成
      */
-    (void)channel;
-    (void)ch;
-
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    UART_DRV_SendDataBlocking((uint32_t)channel,
+                              (const uint8_t *)&ch, 1u,
+                              1000u);  /* 1s 超时 */
 }
 
-char uart_getchar(uart_channel_t channel) {
+char uart_getchar(uart_channel_t channel)
+{
+    uint8_t ch;
+
     /*
-     * TODO §6.2.3：实现 UART 接收
-     * 步骤：
-     *   1. 等待 STAT[RDRF] = 1 (接收数据寄存器满)
+     * 调用 SDK API 阻塞接收单个字符
+     * SDK 内部自动处理:
+     *   1. 等待 STAT[RDRF] = 1
      *   2. 读取 DATA 寄存器
-     * 提示：RDRF 是接收缓冲区有数据标志
-     *       可以先检查 STAT[FE] 帧错误
+     *   3. 检查 STAT[FE] 帧错误
      */
-    (void)channel;
+    UART_DRV_ReceiveDataBlocking((uint32_t)channel,
+                                 &ch, 1u,
+                                 1000u);  /* 1s 超时 */
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
-
-    return 0;
+    return (char)ch;
 }
 
-void uart_puts(uart_channel_t channel, const char *str) {
-    /*
-     * TODO §6.2.3：实现 UART 字符串发送
-     * 提示：循环调用 uart_putchar() 直到 str[i] == '\0'
-     *       可以在末尾追加 "\r\n" 实现换行
-     */
-    (void)channel;
-    (void)str;
+void uart_puts(uart_channel_t channel, const char *str)
+{
+    const char *p = str;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 逐字符发送至字符串结束 */
+    while (*p != '\0')
+    {
+        uart_putchar(channel, *p);
+        p++;
+    }
+
+    /* 追加换行 */
+    uart_putchar(channel, '\r');
+    uart_putchar(channel, '\n');
 }

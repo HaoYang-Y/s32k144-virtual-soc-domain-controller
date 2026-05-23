@@ -1,115 +1,138 @@
 /*
  * @brief ADC 驱动实现 (S32K144)
- *        通过直接操作寄存器实现 ADC 模数转换
+ *        基于 NXP S32 SDK ADC_DRV API 实现模数转换
  *
- * @note 参考: S32K1xx Reference Manual, Chapter 56 (ADC)
- *       对应书籍：第10章 ADC 模块
+ * @note 本驱动封装 NXP S32 SDK 的 ADC 驱动层 API
  *
- * TODO：阅读 §10.2 后，按以下步骤实现每个函数
- *       关键寄存器：
- *         - SC1n:  通道选择 + 转换完成标志 (COCO, AIEN, ADCH)
- *         - CFG1:  ADLPC, ADIV, ADLSMP, MODE, ADICLK
- *         - CFG2:  SMPLTS, MUXSEL
- *         - SC2:   REFSEL, ACFE, ACFGT, ACREN, TRGPRLT
- *         - SC3:   AVGE, AVGS, CAL
- *         - Rn:    转换结果 (12 位右对齐)
- *         - CVn:   比较阈值寄存器
+ *       SDK API 涉及:
+ *         - ADC_DRV_Init():             初始化 ADC 模块
+ *         - ADC_DRV_StartConv():        启动 ADC 转换
+ *         - ADC_DRV_GetConvResult():    获取转换结果
+ *
+ *       SDK 配置结构体:
+ *         - adc_user_config_t:  包含分辨率、参考电压、采样时间等
+ *         - adc_conv_result_t:  转换结果结构体
  */
 #include "adc.h"
 
-/* ========== 寄存器结构体定义 ========== */
-
-/*
- * TODO §10.2：定义 ADC 寄存器结构体
- * 提示：包含 SC1n(0..7) / CFG1 / CFG2 / SC2 / SC3 / Rn(0..7) / CVn(0..3)
- *       参考手册 ADC 寄存器列表 (Chapter 56.3)
- */
-typedef struct {
-    /* ADC 寄存器映射 */
-} adc_regs_t;
-
-/* ========== 寄存器基址映射 ========== */
-
-/* TODO：映射 ADC0 和 ADC1 的寄存器指针 */
-/* TODO：默认使用 ADC0 */
+/* NXP S32 SDK ADC 驱动头文件 */
+#include "adc_driver.h"
 
 /* ========== 函数实现 ========== */
 
-int adc_init(adc_resolution_t resolution, adc_ref_sel_t ref_sel) {
-    /*
-     * TODO §10.2.1：实现 ADC 初始化
-     * 步骤：
-     *   1. 参数检查
-     *   2. 使能 ADC 时钟 (PCC_ADC0[CGC])
-     *   3. 配置 CFG1:
-     *      - MODE[1:0] = resolution (8/10/12 bit)
-     *      - ADICLK[1:0] = 0 (总线时钟)
-     *      - ADLSMP = 0 (短采样)
-     *   4. 配置 CFG2:
-     *      - SMPLTS[7:0] = 采样周期数
-     *   5. 配置 SC2:
-     *      - REFSEL = ref_sel
-     *      - ADTRG = 0 (软件触发)
-     *   6. 配置 SC3:
-     *      - AVGE = 0 (禁止硬件平均)
-     *   7. 返回 0
-     */
-    (void)resolution;
-    (void)ref_sel;
+int adc_init(adc_resolution_t resolution, adc_ref_sel_t ref_sel)
+{
+    adc_user_config_t adcConfig;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+    /* 参数检查 */
+    if ((resolution > ADC_RES_12BIT) || (ref_sel > ADC_REF_VALT))
+    {
+        return -1;
+    }
+
+    /*
+     * 使用 SDK 默认配置初始化 adc_user_config_t
+     * SDK 提供 ADC_DRV_GetDefaultConfig() 填充默认值
+     */
+    ADC_DRV_GetDefaultConfig(&adcConfig);
+
+    /* 根据参数配置 ADC */
+    adcConfig.resolution   = (uint8_t)resolution;
+    adcConfig.refVoltSrc   = (uint8_t)ref_sel;
+    adcConfig.clockDivider = 0u;       /* 时钟分频: 1 */
+    adcConfig.sampleTime   = 0u;       /* 短采样时间 */
+    adcConfig.longSample   = false;    /* 短采样模式 */
+    adcConfig.hwAverage    = false;    /* 禁止硬件平均 */
+    adcConfig.averageNum   = 0u;       /* 平均次数: 无 */
+    adcConfig.triggerSource = 0u;      /* 软件触发 */
+    adcConfig.enableDma    = false;    /* 禁止 DMA */
+    adcConfig.dmaChnl      = 0u;       /* DMA 通道: 无 */
+
+    /*
+     * 调用 SDK API 初始化 ADC 模块
+     * SDK 内部自动完成:
+     *   1. 使能 PCC_ADC0 时钟
+     *   2. 配置 CFG1 寄存器 (MODE, ADICLK, ADIV, ADLSMP)
+     *   3. 配置 CFG2 寄存器 (SMPLTS)
+     *   4. 配置 SC2 寄存器 (REFSEL, ADTRG)
+     *   5. 校准 ADC
+     */
+    ADC_DRV_Init(0u, &adcConfig);
 
     return 0;
 }
 
-uint16_t adc_read(adc_channel_t channel) {
+uint16_t adc_read(adc_channel_t channel)
+{
+    adc_conv_result_t result;
+
+    /* 参数检查 */
+    if (channel > ADC_CHANNEL_15)
+    {
+        return 0u;
+    }
+
     /*
-     * TODO §10.2.2：实现单次 ADC 转换
-     * 步骤：
-     *   1. while (!(SC1n[0] & SC1_COCO_MASK)) { } 等待上次完成
-     *   2. SC1n[0] = (SC1n[0] & ~SC1_ADCH_MASK) | channel
-     *      注意: 写 SC1n 会启动转换
-     *   3. while (!(SC1n[0] & SC1_COCO_MASK)) { } 等待本次完成
-     *   4. 返回 Rn[0] 结果寄存器的值
+     * 调用 SDK API 启动 ADC 转换并等待完成
+     *
+     * SDK 内部自动完成:
+     *   1. 配置 SC1n[ADCH] = channel 选择通道
+     *   2. 等待 COCO 标志位置位 (转换完成)
+     *   3. 读取 Rn 结果寄存器
+     *   4. 将 MB 重新设置为空闲状态
      */
-    (void)channel;
+    (void)ADC_DRV_StartConv(0u, (uint8_t)channel);
+    ADC_DRV_GetConvResult(0u, &result);
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
-
-    return 0;
+    return (uint16_t)result.result;
 }
 
 uint32_t adc_raw_to_mv(uint16_t raw_value,
                        adc_resolution_t resolution,
-                       uint32_t vref_mv) {
+                       uint32_t vref_mv)
+{
+    uint32_t max_value;
+    uint32_t voltage_mv;
+
+    /* 根据分辨率计算最大值 */
+    switch (resolution)
+    {
+        case ADC_RES_8BIT:
+            max_value = 255u;    /* 2^8 - 1 */
+            break;
+
+        case ADC_RES_10BIT:
+            max_value = 1023u;   /* 2^10 - 1 */
+            break;
+
+        case ADC_RES_12BIT:
+            max_value = 4095u;   /* 2^12 - 1 */
+            break;
+
+        default:
+            return 0u;
+    }
+
     /*
-     * TODO：将 ADC 原始值转换为毫伏
-     * 公式：
-     *   8 位:  voltage = raw_value * vref_mv / 255
-     *   10 位: voltage = raw_value * vref_mv / 1023
-     *   12 位: voltage = raw_value * vref_mv / 4095
+     * 电压转换公式:
+     * voltage = raw_value * vref_mv / max_value
      *
-     * 提示：使用 uint32_t 计算避免溢出
+     * 先乘后除以保持精度，使用 uint32_t 避免溢出
      */
-    (void)raw_value;
-    (void)resolution;
-    (void)vref_mv;
+    voltage_mv = ((uint32_t)raw_value * vref_mv) / max_value;
 
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
-
-    return 0;
+    return voltage_mv;
 }
 
-uint16_t adc_get_last_result(void) {
-    /*
-     * TODO：读取最后一次转换结果
-     * 提示：直接返回 Rn[0] 的值
-     */
-    /* TODO：删除下面这行，填入你的实现 */
-    while (1) { /* 未实现 */ }
+uint16_t adc_get_last_result(void)
+{
+    adc_conv_result_t result;
 
-    return 0;
+    /*
+     * 调用 SDK API 获取最后一次转换结果
+     * 不触发新转换
+     */
+    ADC_DRV_GetConvResult(0u, &result);
+
+    return (uint16_t)result.result;
 }

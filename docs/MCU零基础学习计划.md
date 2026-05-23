@@ -10,19 +10,18 @@
 ## 🧩 SDK 说明
 
 本工程 MCU 代码基于 **NXP S32 SDK for S32K1xx (RTM 4.0.2)** 开发，SDK 位于
-`mcu/S32_SDK_S32K1xx_RTM_4.0.2/`。SDK 提供了完整的硬件抽象层（HAL）和外设驱动层（PD），
-封装了对寄存器的直接操作。
+`mcu/S32_SDK_S32K1xx_RTM_4.0.2/`。
 
-### SDK 说明：替代直接寄存器操作
+### SDK 说明：使用 SDK API 替代寄存器操作
 
-本工程使用 NXP S32 SDK 提供的 HAL/PD 层 API 替代直接寄存器操作，避免大量手写寄存器配置代码：
+本工程使用 NXP S32 SDK 提供的 HAL/PD 层 API，不涉及直接寄存器操作：
 
-| 传统方式 | SDK 方式 |
+| 传统方式（本书不采用） | SDK 方式（本工程采用） |
 |---------|---------|
-| 手写 `*(volatile uint32_t*)addr` | SDK API：`FLEXCAN_DRV_Init()` 等 |
+| 手写 `*(volatile uint32_t*)addr` 操作寄存器 | SDK API：`FLEXCAN_DRV_Init()`、`ADC_DRV_Init()` 等 |
 | 逐寄存器配置外设 | SDK 驱动层：`flexcan_driver.h`、`lpuart_driver.h` |
 | 手写 startup 汇编 | SDK 提供 `startup_S32K144.S` |
-| 手写 SCGOUT/SPLL 寄存器 | SDK 提供 `clock.h` + `CLOCK_SYS_*` API |
+| 手写时钟配置 | SDK 提供 `clock_manager.h` + `CLOCK_SYS_*` API |
 
 ### 学习策略
 
@@ -45,9 +44,9 @@
 | Timer (LPIT) | `platform/drivers/inc/lpit_driver.h` | `LPIT_DRV_*` |
 | Timer (LPTMR) | `platform/drivers/inc/lptmr_driver.h` | `LPTMR_DRV_*` |
 | ADC | `platform/drivers/inc/adc_driver.h` | `ADC_DRV_*` |
-| Clock | `platform/drivers/inc/clock.h` | `CLOCK_SYS_*` |
+| Clock | `platform/drivers/inc/clock_manager.h` | `CLOCK_SYS_*` |
 | 中断管理 | `platform/drivers/inc/interrupt_manager.h` | `INT_SYS_*` |
-| 设备寄存器 | `platform/devices/S32K144.h` | `CAN0_BASE`、`PCC_CAN0` 等宏 |
+| 设备寄存器定义 | `platform/devices/S32K144.h` | `CAN0_BASE`、`PCC_CAN0` 等宏 |
 
 ---
 
@@ -174,15 +173,14 @@ arm-none-eabi-gcc --version
 
 ### Step 1：C 语言嵌入式必备知识点
 
-这是 MCU 编程的基础，需要掌握才能看懂寄存器操作：
+这是 MCU 编程的基础，理解下面这些知识点有助于阅读 SDK 头文件和本项目代码：
 
 | 知识点 | 为什么重要 | 本项目应用 |
 |--------|-----------|-----------|
-| **指针与地址操作** | 寄存器就是内存地址 | `*(volatile uint32_t*)addr = val;` |
-| **位运算**（&、\|、~、<<、>>） | 配置寄存器特定位 | `reg |= (1 << 5);` |
-| **volatile 关键字** | 防止编译器优化寄存器读取 | `volatile uint32_t` |
-| **结构体指针映射** | 分组访问外设寄存器 | `CAN_Type *can = (CAN_Type*)base;` |
-| **宏定义与枚举** | 寄存器地址/掩码抽象 | `#define MCR(x) *(volatile uint32_t*)((x) + 0x00)` |
+| **typedef / 结构体** | SDK 用结构体封装配置参数 | `flexcan_user_config_t`、`lpit_user_config_t` |
+| **枚举与宏定义** | SDK 使用枚举定义模式/状态 | `can_frame_type_t`、`clock_source_t` |
+| **volatile 关键字** | 防止编译器优化外设寄存器读取 | SDK 内部使用 |
+| **函数指针** | SDK 回调机制 | 中断回调注册 |
 | **链接脚本** (.ld) | 内存布局、段定义 | `s32k144_flash.ld` |
 
 ### Step 2：时钟系统
@@ -191,10 +189,20 @@ arm-none-eabi-gcc --version
 
 | 项目对应代码 | 重点理解 |
 |------------|---------|
-| `mcu/clock/README.md` | 时钟树结构 |
-| `mcu/clock/src/clock_driver.c` | SCGOUT/SPLL/分频器 |
+| `mcu/src/clock.c` | 时钟源初始化流程 |
+| `mcu/include/clock.h` | 时钟源枚举、API 声明 |
 
-✅ **完成标准**: 系统时钟配置到 80MHz（SPLL），CAN 外设时钟使能
+**SDK API 调用流程**：
+```c
+// 1. 加载配置
+CLOCK_SYS_Init(NULL);
+// 2. 应用配置
+CLOCK_SYS_SetConfiguration(NULL);
+// 3. 切换系统时钟源
+CLOCK_SYS_SetSource(CLOCK_SRC_SPLL);
+```
+
+✅ **完成标准**: 理解时钟树结构（SOSC→SPLL→CORE_CLK），能够调用 SDK API 配置系统时钟
 
 ### Step 3：FlexCAN 驱动
 
@@ -202,10 +210,9 @@ arm-none-eabi-gcc --version
 
 | 项目对应代码 | 重点理解 |
 |------------|---------|
-| `mcu/flexcan/README.md` | CAN 帧格式、仲裁、位填充 |
-| `mcu/flexcan/include/flexcan_driver.h` | CAN 协议引擎 |
-| `mcu/flexcan/src/flexcan_driver.c` | CTRL/MCR/IFLAG/MB |
-| flexcan_driver.c 中的 TODO | 初始化、发送、接收、中断 |
+| `mcu/include/flexcan.h` | CAN 帧结构体定义、API 声明 |
+| `mcu/src/flexcan.c` | SDK API：`FLEXCAN_DRV_Init()`、`FLEXCAN_DRV_SendBlocking()`、`FLEXCAN_DRV_ReceiveBlocking()` |
+| `mcu/Makefile` | SDK 头文件路径、库链接 |
 
 **验证方法**（独立模块测试）：
 ```
@@ -219,25 +226,22 @@ MCU 端 (S32K144)               Linux 虚拟机
 
 ✅ **完成标准**: `candump can0` 在虚拟机上能稳定收到 S32K144 发出的 CAN 帧（500kbps）
 
-**🔄 AUTOSAR CP 概念穿插**：学完本节后阅读 `mcu/flexcan/README.md` 底部的 AUTOSAR 对照表，理解 MCAL Can 模块（Can_Init/Can_Write/Can_Read）与寄存器驱动的关系。
+**🔄 AUTOSAR CP 概念穿插**：了解 MCAL Can 模块（Can_Init/Can_Write/Can_Read）与 SDK 驱动 API 的对应关系。
 
 ---
 
 ## 阶段 2：MCU 端 domain_controller 应用（2~3 周）
 
 > **核心阶段**: 将 FlexCAN + UART 组合为域控制器网关应用。
-> MCU 接收 CAN 帧 → 解析信号 → 通过 UART 发送结构化数据给 SOC。
+> 通过 SDK API 实现 MCU 接收 CAN 帧 → 解析信号 → 通过 UART 发送结构化数据给 SOC。
 
-### 2.1 新建 `mcu/domain_controller/` 目录
+### 2.1 应用代码
 
-| 文件 | 职责 | 依赖 |
-|------|------|------|
-| `src/main.c` | 主循环：FlexCAN 收帧 → 信号解析 → UART 发送 | `flexcan_driver.h`, `uart_driver.h` |
-| `include/dc_signal_parser.h` | CAN 信号解析接口（DBC 映射表） | — |
-| `src/dc_signal_parser.c` | 数据位操作：从 CAN 帧 payload 提取信号物理值 | — |
-| `include/dc_uart_proto.h` | UART 自定义传输协议定义 | — |
-| `src/dc_uart_proto.c` | UART 组帧/校验实现 | `uart_driver.h` |
-| `Makefile` | 编译链接，复用共享启动代码和链接脚本 | `../s32k144_flash.ld` |
+| 文件 | 职责 | 依赖的 SDK API |
+|------|------|--------------|
+| `mcu/src/flexcan.c` | FlexCAN 接收 CAN 帧 | `FLEXCAN_DRV_Init()`、`FLEXCAN_DRV_ReceiveBlocking()` |
+| `mcu/src/uart.c` | UART 发送结构化数据 | `UART_DRV_Init()`、`UART_DRV_SendDataBlocking()` |
+| `mcu/src/clock.c` | 系统时钟配置 | `CLOCK_SYS_Init()`、`CLOCK_SYS_SetConfiguration()` |
 
 ### 2.2 UART 自定义传输协议
 
@@ -280,9 +284,9 @@ MCU 端 (S32K144)               Linux 虚拟机
 
 | 学习内容 | 项目对应代码 | 重点理解 |
 |---------|------------|---------|
-| Linux 串口编程 | `soc/include/uart_receiver.h` | termios 配置、非阻塞读 |
-| 自定义协议解析 | `soc/src/uart_receiver/` | 帧同步、CRC8 校验、环形缓冲区 |
-| 信号反序列化 | `soc/src/signal_fusion/signal_manager.cpp` | 字节序转换、物理值缓存 |
+| Linux 串口编程 | `soc/include/can_manager.h` | termios 配置、非阻塞读 |
+| 自定义协议解析 | `soc/src/can_manager/can_manager.cpp` | 帧同步、CRC8 校验、环形缓冲区 |
+| 信号管理 | `soc/src/signal_fusion/signal_manager.cpp` | 字节序转换、物理值缓存 |
 
 **🔄 AUTOSAR 概念穿插**：理解 PduR（PDU 路由器）和 Com（通信管理器）的角色——UART 收到的结构化信号对应 AUTOSAR 中的 I-PDU。
 
@@ -319,7 +323,7 @@ MCU 端 (S32K144) ──CAN帧──► USB-CAN 工具 (CAN 总线)
 
 ## 阶段 4：SOME/IP 服务通信（3~4 周）← 双主线之 SOME/IP
 
-> 从 CAN 的"信号级"通信上升到 IP 网络的"服务级"通信，每层附 AUTOSAR AP 概念
+> 从 CAN 的"信号级"通信上升到 IP 网络的"服务级"通信
 
 ### 4.1 SOME/IP 协议基础
 
@@ -370,7 +374,6 @@ CAN 总线 ──► MCU (FlexCAN 收帧) ──► 信号解析 ──► UART 
 | 0x2E 写 DID | (待实现) |
 | 0x19 读取 DTC | (待实现) |
 
-
 ---
 
 ## 总结
@@ -384,5 +387,5 @@ CAN 总线 ──► MCU (FlexCAN 收帧) ──► 信号解析 ──► UART 
 | 4 | SOME/IP 服务通信 | 3~4 周 | 服务发现 + 序列化 + 全链路 |
 | 5 | UDS 诊断 | 后续 | 诊断协议栈 |
 
-> **一句话**: 从 MCU 寄存器到 SOC 服务——先独立学各外设，再组合实现
+> **一句话**: 从 MCU SDK API 到 SOC 服务——先独立学各外设，再组合实现
 > "CAN→MCU 解析→UART→SOC→SOME/IP" 完整域控制器链路。

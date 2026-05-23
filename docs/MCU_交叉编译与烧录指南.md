@@ -2,13 +2,18 @@
 
 ## 1. 概述
 
-本文档说明如何将 Domain_Controller 工程中的 MCU 驱动模块（gpio/uart/timer/adc/flexcan/clock）交叉编译为 S32K144 可执行文件，并通过 J-Link 烧录到开发板。
+本文档说明如何将 Domain_Controller 工程中的 MCU 模块交叉编译为 S32K144 可执行文件，
+并通过 J-Link 烧录到开发板。
 
 **整体工作流：**
 
 ```
-源码 (*.c)  →  arm-none-eabi-gcc 交叉编译  →  .elf / .hex / .bin  →  JLinkExe 烧录 → S32K144
+源码 (*.c / *.S)  →  arm-none-eabi-gcc 交叉编译  →  .elf / .hex  →  JLinkExe 烧录 → S32K144
 ```
+
+**SDK 说明：** 本工程 MCU 代码基于 NXP S32 SDK (RTM 4.0.2) 开发，
+SDK 位于 `mcu/S32_SDK_S32K1xx_RTM_4.0.2/`。SDK 提供完整的 HAL/PD 驱动
+和设备头文件，无需直接操作寄存器。
 
 ---
 
@@ -16,7 +21,7 @@
 
 ### 2.1 交叉编译工具链
 
-安装 `arm-none-eabi-gcc`（ARM Cortex-M 交叉编译器）：
+安装 `arm-none-eabi-gcc`（ARM Cortex-M4 交叉编译器）：
 
 ```bash
 # Ubuntu / Debian
@@ -26,7 +31,7 @@ sudo apt install gcc-arm-none-eabi
 arm-none-eabi-gcc --version
 ```
 
-工具链基于 `cortex-m4` 内核，使用软浮点（`-mfloat-abi=soft`）。
+工具链基于 Cortex-M4F 内核，使用软浮点（`-mfloat-abi=soft`）。
 
 ### 2.2 J-Link 烧录软件
 
@@ -50,7 +55,7 @@ JLinkExe -Version
 1. 将 J-Link 调试器接入宿主机的 USB 口
 2. 在虚拟机软件中将 J-Link USB 设备**直通**到虚拟机
 3. J-Link 的 SWD 接口连接 S32K144 开发板（SWDIO / SWCLK / GND）
-4. 确保开发板已供电
+4. 确保开发板已供电（S32K144 EVB 通过 USB 供电）
 
 ---
 
@@ -59,18 +64,33 @@ JLinkExe -Version
 ```
 Domain_Controller/
 ├── mcu/
-│   ├── s32k144_flash.ld       # 链接脚本（Flash/SRAM 布局）
-│   ├── gpio/                  # GPIO 驱动模块
-│   ├── uart/                  # UART 驱动模块
-│   ├── timer/                 # Timer 驱动模块
-│   ├── adc/                   # ADC 驱动模块
-│   ├── flexcan/               # FlexCAN 驱动模块
-│   └── clock/                 # Clock 驱动模块
+│   ├── s32k144_flash.ld          # 链接脚本（Flash/SRAM 布局）
+│   ├── Makefile                  # 顶层编译脚本，编译所有外设驱动
+│   ├── include/                  # 各外设驱动头文件
+│   │   ├── gpio.h                # GPIO 驱动 API
+│   │   ├── uart.h                # UART 驱动 API
+│   │   ├── timer.h               # Timer 驱动 API
+│   │   ├── adc.h                 # ADC 驱动 API
+│   │   ├── flexcan.h             # FlexCAN 驱动 API
+│   │   └── clock.h               # 时钟配置 API
+│   ├── src/                      # 各外设驱动源文件
+│   │   ├── gpio.c                # GPIO 驱动实现
+│   │   ├── uart.c                # UART 驱动实现
+│   │   ├── timer.c               # Timer 驱动实现
+│   │   ├── adc.c                 # ADC 驱动实现
+│   │   ├── flexcan.c             # FlexCAN 驱动实现
+│   │   └── clock.c               # 时钟配置实现
+│   └── S32_SDK_S32K1xx_RTM_4.0.2/  # NXP S32 SDK（预置）
+│       └── platform/
+│           ├── drivers/inc/      # SDK 外设驱动头文件
+│           ├── devices/          # 设备寄存器定义
+│           ├── startup/          # 启动文件
+│           └── ...
 ├── tools/
-│   ├── mcu_flash.sh           # 一键编译+烧录脚本（推荐方式）
-│   └── soc_build.sh           # SOC 端（Linux 域控制器）构建脚本
+│   ├── mcu_flash.sh              # 一键编译+烧录脚本
+│   └── soc_build.sh              # SOC 端构建脚本
 └── docs/
-    └── MCU_交叉编译与烧录指南.md  # 本文档
+    └── MCU_交叉编译与烧录指南.md   # 本文档
 ```
 
 ### 3.1 链接脚本（mcu/s32k144_flash.ld）
@@ -79,200 +99,106 @@ S32K144 的内存布局：
 
 | 区域 | 地址范围 | 大小 |
 |------|----------|------|
-| Flash | 0x00000000 - 0x0007FFFF | 512KB |
-| SRAM | 0x1FFF8000 - 0x20003FFF | 48KB |
+| Flash | 0x00000000 - 0x0007FFFF | 512 KB |
+| SRAM | 0x1FFF8000 - 0x20003FFF | 48 KB |
+
+链接脚本定义了代码段、数据段、BSS 段等在 Flash 和 SRAM 中的放置位置。
 
 ---
 
 ## 4. 编译流程
 
-每个驱动模块使用独立的 Makefile，编译流程一致。
+### 4.1 Makefile 结构
 
-### 4.1 Makefile 关键参数
+使用单个顶层 Makefile（`mcu/Makefile`）编译选定的外设驱动模块。
+通过 `TARGET` 变量指定要编译的模块。
 
-以下以 GPIO 模块为例，展示 SDK 集成前后的 Makefile 对比。
+**SDK 路径约定**：NXP S32 SDK 位于 `S32_SDK_S32K1xx_RTM_4.0.2/`
+（相对于 `mcu/Makefile` 所在目录），所有头文件和启动文件通过相对路径引用。
 
-> **SDK 路径约定**：NXP S32 SDK 位于 `mcu/S32_SDK_S32K1xx_RTM_4.0.2/`，
-> 所有模块 Makefile 通过相对路径 `../S32_SDK_S32K1xx_RTM_4.0.2/` 引用 SDK。
-
-#### 4.1.1 无 SDK 的旧版 Makefile（教学参考）
+### 4.2 Makefile 关键参数
 
 ```makefile
+# mcu/Makefile 核心配置
+
 CC      = arm-none-eabi-gcc
 MCU     = cortex-m4
 FPU     = -mfloat-abi=soft
-CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
-CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
-CFLAGS += -O2 -g
-CFLAGS += -ffunction-sections -fdata-sections
-LDFLAGS = -mcpu=$(MCU) $(FPU) -mthumb
-LDFLAGS += -T ../s32k144_flash.ld      # 使用链接脚本
-LDFLAGS += -Wl,--gc-sections           # 垃圾回收，减小体积
-LDFLAGS += -specs=nano.specs           # 使用精简 C 库
-```
 
-#### 4.1.2 集成 SDK 的 Makefile（工程实际使用）
-
-SDK 提供了完整的 HAL/PD 驱动、设备头文件和启动代码。集成 SDK 后，Makefile 需要：
-
-1. 添加 SDK 头文件搜索路径（`-I`）
-2. 链接 SDK 预编译库（`-L` + `-l`）
-3. 包含 SDK 启动文件（`startup_S32K144.S`）
-
-```makefile
-CC      = arm-none-eabi-gcc
-MCU     = cortex-m4
-FPU     = -mfloat-abi=soft
 CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
 CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
 CFLAGS += -O2 -g
 CFLAGS += -ffunction-sections -fdata-sections
 
 # SDK 基础路径
-SDK_BASE = ../S32_SDK_S32K1xx_RTM_4.0.2
+SDK_BASE = S32_SDK_S32K1xx_RTM_4.0.2
 
-# === SDK 头文件路径 ===
-CFLAGS += -I$(SDK_BASE)/platform/drivers/inc   # 外设驱动头文件
-CFLAGS += -I$(SDK_BASE)/platform/devices        # 设备寄存器定义
-CFLAGS += -I$(SDK_BASE)/platform/devices/S32K144  # S32K144 专属定义
-
-# === SDK 源码文件（编译进目标） ===
-SDK_SRCS = \
-    $(SDK_BASE)/platform/startup/startup_S32K144.S
-
-LDFLAGS = -mcpu=$(MCU) $(FPU) -mthumb
-LDFLAGS += -T ../s32k144_flash.ld      # 使用链接脚本
-LDFLAGS += -Wl,--gc-sections           # 垃圾回收，减小体积
-LDFLAGS += -specs=nano.specs           # 使用精简 C 库
-```
-
-#### 4.1.3 SDK 头文件路径速查表
-
-| SDK 目录 | 相对路径 | 包含什么 |
-|----------|---------|---------|
-| 外设驱动头文件 | `platform/drivers/inc/` | `flexcan_driver.h`、`lpuart_driver.h`、`pins_driver.h`、`adc_driver.h`、`clock.h` 等 |
-| 设备寄存器定义 | `platform/devices/` | `S32K144.h`、`device_registers.h` 等 |
-| 设备专属定义 | `platform/devices/S32K144/` | S32K144 特有宏、中断向量号、PCC 地址等 |
-| 启动文件 | `platform/startup/` | `startup_S32K144.S`（中断向量表、复位处理） |
-| 预编译库 | `lib/S32K14x/` | SDK 的 PAL/PD 预编译 `.a` 文件（可选链接） |
-| PAL 层源码 | `platform/pal/` | 更高层次的 PAL API 封装 |
-
-> **SDK 启动文件说明**：`startup_S32K144.S` 包含了中断向量表、复位处理程序、
-> 系统时钟初始化、`.data` / `.bss` 段初始化等。使用 SDK 时必须包含此文件，
-> 它会自动调用我们的 `main()` 函数。
-
-#### 4.1.4 SDK 集成后的完整 Makefile 示例（flexcan 模块）
-
-```makefile
-# mcu/flexcan/Makefile
-
-CC      = arm-none-eabi-gcc
-MCU     = cortex-m4
-FPU     = -mfloat-abi=soft
-
-CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
-CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
-CFLAGS += -O2 -g
-CFLAGS += -ffunction-sections -fdata-sections
-
-# SDK 路径
-SDK_BASE = ../S32_SDK_S32K1xx_RTM_4.0.2
-CFLAGS += -I../include                        # 本地驱动头文件
-CFLAGS += -I$(SDK_BASE)/platform/drivers/inc  # SDK 外设驱动头文件
-CFLAGS += -I$(SDK_BASE)/platform/devices      # SDK 设备寄存器定义
+# SDK 头文件搜索路径
+CFLAGS += -I$(SDK_BASE)/platform/drivers/inc
+CFLAGS += -I$(SDK_BASE)/platform/devices
 CFLAGS += -I$(SDK_BASE)/platform/devices/S32K144
 
+# SDK 启动文件
+SDK_STARTUP = $(SDK_BASE)/platform/startup/startup_S32K144.S
+
 LDFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
-LDFLAGS += -T ../s32k144_flash.ld
+LDFLAGS += -T s32k144_flash.ld
 LDFLAGS += -Wl,--gc-sections
 LDFLAGS += -specs=nano.specs
+LDFLAGS += -specs=nosys.specs
+```
 
-TARGET = flexcan_demo
+### 4.3 编译逻辑
 
-# 源文件：本地代码 + SDK 启动文件
-SRCS = \
-    src/main.c \
-    src/flexcan_driver.c \
-    $(SDK_BASE)/platform/startup/startup_S32K144.S
+```makefile
+# 通过 TARGET 选择编译哪个模块
+TARGET ?= flexcan
 
-OBJS = $(SRCS:.c=.o)
-OBJS := $(OBJS:.S=.o)
+# 自动选择源文件（src/$(TARGET).c）加上 include 头文件、SDK 启动文件
+SRC = src/$(TARGET).c
+OBJ = $(TARGET).o
 
-# 默认目标
-.PHONY: all clean flash
-
-all: $(TARGET).elf $(TARGET).hex
-
-$(TARGET).elf: $(OBJS)
+# 规则：编译源文件 + SDK 启动文件
+$(TARGET).elf: $(TARGET).o $(SDK_STARTUP_O)
 	$(CC) $(LDFLAGS) -o $@ $^
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-%.o: %.S
-	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TARGET).hex: $(TARGET).elf
 	arm-none-eabi-objcopy -O ihex $< $@
-
-clean:
-	rm -f $(OBJS) $(TARGET).elf $(TARGET).hex
-
-# 烧录目标
-flash: $(TARGET).hex
-	printf "loadfile $(TARGET).hex\nr\ng\nq\n" | \
-	JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 ```
 
-#### 4.1.5 SDK 非源码文件集成方式（使用预编译库）
+### 4.4 编译产物
 
-如果不想编译 SDK 源码，可以链接 SDK 预编译的库文件：
-
-```makefile
-# SDK 库文件路径
-SDK_LIB_DIR = $(SDK_BASE)/lib/S32K14x
-
-LDFLAGS += -L$(SDK_LIB_DIR)       # 添加库搜索路径
-LDFLAGS += -l:libflexcan_pal.a    # 链接 FlexCAN PAL 库
-LDFLAGS += -l:libflexcan_driver.a # 链接 FlexCAN PD 驱动库
-# 其他外设库根据需要添加
-```
-
-> **注意**：本工程采用**编译 SDK 源码**的方式（包含 `startup_S32K144.S`），
-> 而非链接预编译库，这样做的好处是：
-> - 代码完全可控，便于调试和修改
-> - 避免预编译库和工具链版本的兼容性问题
-> - 教学目的：可以看到 SDK 内部代码的执行过程
-
-### 4.2 编译产物
-
-| 格式 | 用途 | 生成命令 |
-|------|------|----------|
-| `.elf` | ELF 可执行文件（含调试信息） | `arm-none-eabi-gcc` 链接产出 |
-| `.hex` | Intel HEX 格式（烧录用） | `arm-none-eabi-objcopy -O ihex` |
+| 格式 | 用途 | 生成方式 |
+|------|------|---------|
+| `.elf` | ELF 可执行文件（含调试信息） | `make` 默认产出 |
+| `.hex` | Intel HEX 格式（烧录用） | `make` 自动生成 |
 | `.bin` | 纯二进制镜像 | `arm-none-eabi-objcopy -O binary` |
 
-### 4.3 手动编译（以 GPIO 为例）
+### 4.5 手动编译
 
 ```bash
-# 进入模块目录
-cd mcu/gpio
+# 进入 mcu 目录
+cd mcu
+
+# 指定要编译的目标（默认为 flexcan）
+make TARGET=gpio
+
+# 编译其他模块
+make TARGET=uart
+make TARGET=flexcan
+make TARGET=timer
+make TARGET=adc
+make TARGET=clock
 
 # 清理
 make clean
-
-# 编译
-make -j$(nproc)
-
-# 产物
-ls -la gpio_demo.elf gpio_demo.hex gpio_demo.bin
 ```
 
 ---
 
 ## 5. 烧录方式
 
-### 5.1 方式一：推荐 — 一键脚本
+### 5.1 推荐方式：一键脚本
 
 ```bash
 # 仅编译
@@ -293,23 +219,24 @@ ls -la gpio_demo.elf gpio_demo.hex gpio_demo.bin
 ./tools/mcu_flash.sh clock flash       # Clock
 ```
 
-### 5.2 方式二：直接调用 Makefile flash 目标
+### 5.2 直接通过 Makefile 烧录
 
 ```bash
-cd mcu/gpio
-make flash
+cd mcu
+
+# 编译 flexcan 并烧录
+make TARGET=flexcan flash
 ```
 
-每个 Makefile 的 `flash` 目标内部执行：
+`make flash` 目标内部执行（以 flexcan 为例）：
 
 ```bash
-printf "loadfile gpio_demo.hex\nr\ng\nq\n" | \
+# 实际由 Makefile 中的 flash 目标执行：
+printf "loadfile flexcan.hex\nr\ng\nq\n" | \
 JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 ```
 
 ### 5.3 JLinkExe 命令详解
-
-烧录命令由以下参数组成：
 
 | 参数 | 说明 | 值 |
 |------|------|-----|
@@ -318,59 +245,57 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 | `-speed` | SWD 时钟频率（kHz） | 4000 |
 | `-autoconnect` | 自动连接目标 | 1 |
 
-输入的 J-Link 命令：
+J-Link 内部命令：
 
 ```
-loadfile gpio_demo.hex   # 加载 hex 文件到 Flash
-r                        # 复位 MCU
-g                        # 运行程序
-q                        # 退出 JLinkExe
+loadfile flexcan.hex   # 加载 hex 文件到 Flash
+r                      # 复位 MCU
+g                      # 运行程序
+q                      # 退出 JLinkExe
 ```
 
 ---
 
 ## 6. 模块清单
 
-| 模块 | 目录 | 目标名 |
-|------|------|--------|
-| GPIO | `mcu/gpio/` | `gpio_demo` |
-| UART | `mcu/uart/` | `uart_demo` |
-| Timer | `mcu/timer/` | `timer_demo` |
-| ADC | `mcu/adc/` | `adc_demo` |
-| FlexCAN | `mcu/flexcan/` | `flexcan_demo` |
-| Clock | `mcu/clock/` | `clock_demo` |
+| 模块 | TARGET 值 | 源文件 | 头文件 |
+|------|-----------|--------|--------|
+| GPIO | `gpio` | `src/gpio.c` | `include/gpio.h` |
+| UART | `uart` | `src/uart.c` | `include/uart.h` |
+| Timer | `timer` | `src/timer.c` | `include/timer.h` |
+| ADC | `adc` | `src/adc.c` | `include/adc.h` |
+| FlexCAN | `flexcan` | `src/flexcan.c` | `include/flexcan.h` |
+| Clock | `clock` | `src/clock.c` | `include/clock.h` |
 
 ---
 
 ## 7. 常用命令速查
 
 ```bash
-# === 编译相关 ===
+# === 编译 ===
 
-# 编译单个模块
-./tools/mcu_flash.sh gpio
+# 编译 FlexCAN 模块
+cd mcu && make TARGET=flexcan
 
-# 清理后重新编译
-make -C mcu/gpio clean
-make -C mcu/gpio -j$(nproc)
+# 编译所有模块（依次执行）
+for t in gpio uart timer adc flexcan clock; do make TARGET=$t; done
 
 # 查看编译产物大小
-arm-none-eabi-size mcu/gpio/gpio_demo.elf
+arm-none-eabi-size flexcan.elf
 
-# 反汇编查看生成代码
-arm-none-eabi-objdump -d mcu/gpio/gpio_demo.elf
+# 反汇编查看机器码
+arm-none-eabi-objdump -d flexcan.elf
 
-
-# === 烧录相关 ===
+# === 烧录 ===
 
 # 一键编译+烧录
-./tools/mcu_flash.sh gpio flash
+./tools/mcu_flash.sh flexcan flash
 
 # 单独烧录（需先编译）
-make -C mcu/gpio flash
+cd mcu && make TARGET=flexcan flash
 
-# 手动执行 JLinkExe 烧录
-printf "loadfile mcu/gpio/gpio_demo.hex\nr\ng\nq\n" | \
+# 手动 JLinkExe 烧录
+printf "loadfile flexcan.hex\nr\ng\nq\n" | \
 JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 ```
 
@@ -378,7 +303,7 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 
 ## 8. 常见问题
 
-### Q1: 编译时报 `arm-none-eabi-gcc: command not found`
+### Q1: `arm-none-eabi-gcc: command not found`
 
 **原因**：未安装交叉编译工具链。
 **解决**：
@@ -386,7 +311,7 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 sudo apt install gcc-arm-none-eabi
 ```
 
-### Q2: 烧录时报 `Could not find J-Link`
+### Q2: `Could not find J-Link`
 
 **原因**：
 - J-Link 未插入 USB
@@ -400,13 +325,15 @@ lsusb | grep -i segger
 ls /dev/ttyACM*
 ```
 
-### Q3: 烧录时报 `Cannot connect to target`
+### Q3: `Cannot connect to target`
 
-**原因**：SWD 连接问题，检查 SWDIO/SWCLK/GND 三根线是否正确连接，开发板是否供电。
+**原因**：SWD 连接问题——检查 SWDIO / SWCLK / GND 三根线是否正确连接，
+开发板是否供电。
 
 ### Q4: 编译有 warning 但能生成 hex 文件
 
-当前工程中存在 `struct has no members` 和 `_close is not implemented` 等 warning，不影响烧录和运行。这些是教学示例代码中预留的结构体骨架和裸机未实现的系统调用。
+工程中存在 `struct has no members` 和 `_close is not implemented` 等 warning，
+不影响烧录和运行。这些是 SDK 骨架结构体和裸机下未实现的系统调用桩。
 
 ---
 
@@ -416,6 +343,10 @@ ls /dev/ttyACM*
 |------|------|
 | `mcu/s32k144_flash.ld` | S32K144 链接脚本（内存布局） |
 | `tools/mcu_flash.sh` | 一键编译+烧录脚本 |
-| `mcu/*/Makefile` | 各模块构建脚本 |
-| `mcu/*/include/*.h` | 各模块驱动头文件 |
-| `mcu/*/src/*.c` | 各模块驱动实现 |
+| `mcu/Makefile` | 顶层构建脚本 |
+| `mcu/include/*.h` | 各模块驱动头文件 |
+| `mcu/src/*.c` | 各模块驱动实现 |
+| `mcu/S32_SDK_S32K1xx_RTM_4.0.2/` | NXP S32 SDK（预置） |
+
+> **注意**：本工程采用编译 SDK 源码的方式（包含 `startup_S32K144.S`），
+> 而非链接预编译库，好处是代码完全可控、便于调试。

@@ -1,27 +1,14 @@
 /*
  * @brief UART 驱动头文件 (S32K144)
- *        封装 UART 模块的寄存器操作，提供串口收发功能
+ *        封装基于 NXP S32 SDK 的 LPUART 串口收发功能
  *
- * @note 学习目标：理解 UART 异步串行通信协议及寄存器配置
- *       对应书籍：第6章 串口通信 (§6.2~§6.4)
- *
- * TODO：看书后实现以下函数
- *       1. uart_init()     — 初始化 UART 波特率、数据格式
- *       2. uart_putchar()  — 发送单个字符
- *       3. uart_getchar()  — 接收单个字符（阻塞）
- *       4. uart_puts()     — 发送字符串
- *       5. uart_printf()   — 格式化输出（可选）
+ * @note 本驱动使用 NXP S32 SDK LPUART_DRV API 实现
+ *       涉及的头文件：lpuart_driver.h
  */
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
-
-/* ========== UART 基地址 ========== */
-/* TODO §6.2：从 S32K144 参考手册中找到 LPUART 寄存器基地址 */
-#define LPUART0_BASE    (0x4006A000u)
-#define LPUART1_BASE    (0x4006B000u)
-#define LPUART2_BASE    (0x4006C000u)
 
 /* ========== 枚举定义 ========== */
 
@@ -55,12 +42,7 @@ typedef enum {
 
 /**
  * @brief 初始化 UART
- *        1. 使能 LPUART 时钟 (PCC)
- *        2. 配置引脚复用为 UART 功能 (PORT PCR)
- *        3. 复位 LPUART (GLOBAL 寄存器)
- *        4. 配置波特率 (BAUD 寄存器)
- *        5. 配置数据格式 (CTRL: M/PE/PT 位)
- *        6. 使能发送器和接收器 (CTRL: TE/RE 位)
+ *        通过 NXP S32 SDK 配置 LPUART 时钟、波特率、数据格式
  *
  * @param[in]  channel     UART 通道 (0/1/2)
  * @param[in]  baudrate    波特率 (9600/115200/...)
@@ -69,7 +51,7 @@ typedef enum {
  * @param[in]  stop_bits   停止位 (1/2)
  * @return     0=成功, -1=参数错误
  *
- * TODO：阅读 §6.2.2 LPUART 寄存器描述，实现此函数
+ * @note SDK API: LPUART_DRV_Init()
  */
 int uart_init(uart_channel_t channel, uint32_t baudrate,
               uart_data_bits_t data_bits, uart_parity_t parity,
@@ -77,29 +59,30 @@ int uart_init(uart_channel_t channel, uint32_t baudrate,
 
 /**
  * @brief 发送单个字符（阻塞）
+ *
  * @param[in]  channel   UART 通道
  * @param[in]  ch        待发送的字符
  *
- * TODO：等待 TDRE 标志置位 → 写入 DATA 寄存器
- *       提示：检查 STAT[TDRE] 位
+ * @note SDK API: LPUART_DRV_SendDataBlocking()
  */
 void uart_putchar(uart_channel_t channel, char ch);
 
 /**
  * @brief 接收单个字符（阻塞）
+ *
  * @param[in]  channel   UART 通道
  * @return     接收到的字符
  *
- * TODO：等待 RDRF 标志置位 → 读取 DATA 寄存器
- *       提示：检查 STAT[RDRF] 位
+ * @note SDK API: LPUART_DRV_ReceiveDataBlocking()
  */
 char uart_getchar(uart_channel_t channel);
 
 /**
  * @brief 发送字符串（阻塞）
+ *
  * @param[in]  channel   UART 通道
  * @param[in]  str       以 '\0' 结尾的字符串
  *
- * TODO：循环调用 uart_putchar() 直到遇到 '\0'
+ * @note 循环调用 uart_putchar() 直到遇到 '\0'
  */
 void uart_puts(uart_channel_t channel, const char *str);
