@@ -11,7 +11,7 @@ FPU     = -mfloat-abi=soft
 
 CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
 CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
-CFLAGS += -O2 -g
+CFLAGS += -O0 -g3
 CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -I. -I./include
 
@@ -20,7 +20,8 @@ LDFLAGS += -T ../s32k144_flash.ld
 LDFLAGS += -Wl,--gc-sections -Wl,-Map=output.map
 LDFLAGS += -specs=nano.specs -specs=nosys.specs
 
-SRCS  = src/main.c
+SRCS  = src/startup.c
+SRCS += src/main.c
 SRCS += src/gpio_driver.c
 
 OBJS  = $(SRCS:.c=.o)

@@ -1,75 +1,86 @@
-/*
- * @brief GPIO 模块主程序 — LED 闪烁
- *        对应书籍：第4章 §4.4 利用构件方法控制LED闪烁
+/**
+ * @brief S32K144 LED常亮验证 — 使用驱动库 API 版
+ *        调用 gpio_driver.h 的 gpio_init / gpio_write 函数
  *
- * 学习目标：
- *   1. 理解 MCU 启动流程（Reset_Handler → main）
- *   2. 掌握 GPIO 寄存器配置（方向/输出）
- *   3. 实现第一个 LED 闪烁程序
+ * @note  S32K144EVB-Q100 板载 LED 映射：
+ *         - PTD0  → RGB 蓝色 LED (SW1-1 使能)
+ *         - PTD1  → 通用 LED        (SW1-2 使能)
+ *         - PTD15 → RGB 红色 LED   (SW1-3 使能)
+ *         - PTD16 → RGB 绿色 LED   (SW1-4 使能)
  *
- * 硬件连接：
- *   - PTD15: 板载 LED（S32K144EVB 蓝色 LED）
- *
- * TODO 第4章学习后实现：
- *   1. 补全中断向量表和 Reset_Handler
- *   2. 调用 gpio_init() 配置 LED 引脚
- *   3. 在 main 循环中控制 LED 闪烁 (500ms 周期)
+ * @note  LED 为共阳极（Active LOW），输出低电平点亮
+ * @note  SW1 DIP 开关必须全部拨到 ON 位置
  */
 #include "gpio_driver.h"
 
-/* ========== 引脚定义 ========== */
-#define LED_PORT    GPIO_PORT_D
-#define LED_PIN     15
+/**
+ * @brief LED 引脚配置表
+ *        (端口, 引脚, 方向, 上下拉)
+ */
+static const gpio_port_t LED_PORT[] = {
+    GPIO_PORT_D,  /* PTD0 */
+    GPIO_PORT_D,  /* PTD1 */
+    GPIO_PORT_D,  /* PTD15 */
+    GPIO_PORT_D,  /* PTD16 */
+};
+
+static const uint8_t LED_PIN[] = {
+    0,   /* PTD0 - RGB 蓝 */
+    1,   /* PTD1 - 通用 */
+    15,  /* PTD15 - RGB 红 */
+    16,  /* PTD16 - RGB 绿 */
+};
+
+#define LED_COUNT  (sizeof(LED_PIN) / sizeof(LED_PIN[0]))
 
 /**
- * @brief 系统初始化
- *        配置板级基本外设
+ * @brief 初始化所有 LED 引脚并点亮
+ *        调用 gpio_driver 库函数实现
  *
- * TODO §4.3：实现 board_init()
- *   1. 调用 gpio_init() 初始化 LED 引脚为输出模式
- *   2. 初始状态 LED 熄灭
- */
-static void board_init(void) {
-    /* TODO：初始化 LED 引脚为推挽输出 */
-
-    /* TODO：初始状态 LED 熄灭 */
-}
-
-/**
- * @brief 主函数
- * @return 不会返回
+ * @note 包括：
+ *        1. 使能 PORTD 时钟 (PCC)
+ *        2. 配置 PORT PCR (MUX=GPIO, 无上下拉)
+ *        3. 配置 GPIO PDDR (方向=输出)
+ *        4. 输出低电平 (PCOR 写 1)
  *
- * TODO §4.4：实现主循环
- *   1. 调用 board_init()
- *   2. 在 while(1) 中:
- *      a. gpio_toggle(LED_PORT, LED_PIN) 翻转 LED
- *      b. gpio_delay_ms(500) 等待 500ms
+ * @return 0=成功, -1=失败
  */
-int main(void) {
-    /* TODO：调用 board_init() */
+static int led_all_on(void)
+{
+    int ret;
 
-    /* TODO：实现主循环 */
-    while (1) {
-        /* TODO：翻转 LED */
+    for (uint32_t i = 0u; i < LED_COUNT; i++)
+    {
+        /* 初始化引脚：输出模式，无上下拉 */
+        ret = gpio_init(LED_PORT[i], LED_PIN[i],
+                        GPIO_DIR_OUTPUT, GPIO_PULL_DISABLE);
+        if (ret != 0)
+        {
+            return -1;
+        }
 
-        /* TODO：延迟 500ms */
+        /* 写 1 点亮 LED（对应 S32K144EVB 官方 SDK 默认行为）*/
+        gpio_write(LED_PORT[i], LED_PIN[i], true);
     }
 
     return 0;
 }
 
-/* ========================================================================
- * 启动代码 (Startup Code)
- * 对应书籍：§4.5 工程文件组织框架
+/**
+ * @brief 主函数
+ *        初始化所有 LED 并保持常亮
  *
- * 在实现 main() 之后，还需要补全以下内容：
- *   1. 中断向量表 (.isr_vector 段) — §4.5.4
- *      - 栈顶地址
- *      - Reset_Handler
- *      - 其他异常向量 (HardFault, SVCall, SysTick 等)
- *   2. Reset_Handler — §4.5.2
- *      - 复制 .data 段到 RAM
- *      - 清零 .bss 段
- *      - 调用 main()
- *   3. 堆栈定义
- * ======================================================================== */
+ * @return 不应返回
+ */
+int main(void)
+{
+    /* 初始化并点亮所有 LED */
+    (void)led_all_on();
+
+    /* 死循环保持 LED 常亮 */
+    while (1u)
+    {
+        /* 空操作，编译器不会优化掉 */
+        __asm__ volatile ("nop");
+    }
+}

@@ -90,7 +90,12 @@ S32K144 的内存布局：
 
 ### 4.1 Makefile 关键参数
 
-以下以 GPIO 模块为例：
+以下以 GPIO 模块为例，展示 SDK 集成前后的 Makefile 对比。
+
+> **SDK 路径约定**：NXP S32 SDK 位于 `mcu/S32_SDK_S32K1xx_RTM_4.0.2/`，
+> 所有模块 Makefile 通过相对路径 `../S32_SDK_S32K1xx_RTM_4.0.2/` 引用 SDK。
+
+#### 4.1.1 无 SDK 的旧版 Makefile（教学参考）
 
 ```makefile
 CC      = arm-none-eabi-gcc
@@ -105,6 +110,139 @@ LDFLAGS += -T ../s32k144_flash.ld      # 使用链接脚本
 LDFLAGS += -Wl,--gc-sections           # 垃圾回收，减小体积
 LDFLAGS += -specs=nano.specs           # 使用精简 C 库
 ```
+
+#### 4.1.2 集成 SDK 的 Makefile（工程实际使用）
+
+SDK 提供了完整的 HAL/PD 驱动、设备头文件和启动代码。集成 SDK 后，Makefile 需要：
+
+1. 添加 SDK 头文件搜索路径（`-I`）
+2. 链接 SDK 预编译库（`-L` + `-l`）
+3. 包含 SDK 启动文件（`startup_S32K144.S`）
+
+```makefile
+CC      = arm-none-eabi-gcc
+MCU     = cortex-m4
+FPU     = -mfloat-abi=soft
+CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
+CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
+CFLAGS += -O2 -g
+CFLAGS += -ffunction-sections -fdata-sections
+
+# SDK 基础路径
+SDK_BASE = ../S32_SDK_S32K1xx_RTM_4.0.2
+
+# === SDK 头文件路径 ===
+CFLAGS += -I$(SDK_BASE)/platform/drivers/inc   # 外设驱动头文件
+CFLAGS += -I$(SDK_BASE)/platform/devices        # 设备寄存器定义
+CFLAGS += -I$(SDK_BASE)/platform/devices/S32K144  # S32K144 专属定义
+
+# === SDK 源码文件（编译进目标） ===
+SDK_SRCS = \
+    $(SDK_BASE)/platform/startup/startup_S32K144.S
+
+LDFLAGS = -mcpu=$(MCU) $(FPU) -mthumb
+LDFLAGS += -T ../s32k144_flash.ld      # 使用链接脚本
+LDFLAGS += -Wl,--gc-sections           # 垃圾回收，减小体积
+LDFLAGS += -specs=nano.specs           # 使用精简 C 库
+```
+
+#### 4.1.3 SDK 头文件路径速查表
+
+| SDK 目录 | 相对路径 | 包含什么 |
+|----------|---------|---------|
+| 外设驱动头文件 | `platform/drivers/inc/` | `flexcan_driver.h`、`lpuart_driver.h`、`pins_driver.h`、`adc_driver.h`、`clock.h` 等 |
+| 设备寄存器定义 | `platform/devices/` | `S32K144.h`、`device_registers.h` 等 |
+| 设备专属定义 | `platform/devices/S32K144/` | S32K144 特有宏、中断向量号、PCC 地址等 |
+| 启动文件 | `platform/startup/` | `startup_S32K144.S`（中断向量表、复位处理） |
+| 预编译库 | `lib/S32K14x/` | SDK 的 PAL/PD 预编译 `.a` 文件（可选链接） |
+| PAL 层源码 | `platform/pal/` | 更高层次的 PAL API 封装 |
+
+> **SDK 启动文件说明**：`startup_S32K144.S` 包含了中断向量表、复位处理程序、
+> 系统时钟初始化、`.data` / `.bss` 段初始化等。使用 SDK 时必须包含此文件，
+> 它会自动调用我们的 `main()` 函数。
+
+#### 4.1.4 SDK 集成后的完整 Makefile 示例（flexcan 模块）
+
+```makefile
+# mcu/flexcan/Makefile
+
+CC      = arm-none-eabi-gcc
+MCU     = cortex-m4
+FPU     = -mfloat-abi=soft
+
+CFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
+CFLAGS += -std=c99 -Wall -Wextra -Wpedantic
+CFLAGS += -O2 -g
+CFLAGS += -ffunction-sections -fdata-sections
+
+# SDK 路径
+SDK_BASE = ../S32_SDK_S32K1xx_RTM_4.0.2
+CFLAGS += -I../include                        # 本地驱动头文件
+CFLAGS += -I$(SDK_BASE)/platform/drivers/inc  # SDK 外设驱动头文件
+CFLAGS += -I$(SDK_BASE)/platform/devices      # SDK 设备寄存器定义
+CFLAGS += -I$(SDK_BASE)/platform/devices/S32K144
+
+LDFLAGS  = -mcpu=$(MCU) $(FPU) -mthumb
+LDFLAGS += -T ../s32k144_flash.ld
+LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -specs=nano.specs
+
+TARGET = flexcan_demo
+
+# 源文件：本地代码 + SDK 启动文件
+SRCS = \
+    src/main.c \
+    src/flexcan_driver.c \
+    $(SDK_BASE)/platform/startup/startup_S32K144.S
+
+OBJS = $(SRCS:.c=.o)
+OBJS := $(OBJS:.S=.o)
+
+# 默认目标
+.PHONY: all clean flash
+
+all: $(TARGET).elf $(TARGET).hex
+
+$(TARGET).elf: $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+%.o: %.S
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET).hex: $(TARGET).elf
+	arm-none-eabi-objcopy -O ihex $< $@
+
+clean:
+	rm -f $(OBJS) $(TARGET).elf $(TARGET).hex
+
+# 烧录目标
+flash: $(TARGET).hex
+	printf "loadfile $(TARGET).hex\nr\ng\nq\n" | \
+	JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
+```
+
+#### 4.1.5 SDK 非源码文件集成方式（使用预编译库）
+
+如果不想编译 SDK 源码，可以链接 SDK 预编译的库文件：
+
+```makefile
+# SDK 库文件路径
+SDK_LIB_DIR = $(SDK_BASE)/lib/S32K14x
+
+LDFLAGS += -L$(SDK_LIB_DIR)       # 添加库搜索路径
+LDFLAGS += -l:libflexcan_pal.a    # 链接 FlexCAN PAL 库
+LDFLAGS += -l:libflexcan_driver.a # 链接 FlexCAN PD 驱动库
+# 其他外设库根据需要添加
+```
+
+> **注意**：本工程采用**编译 SDK 源码**的方式（包含 `startup_S32K144.S`），
+> 而非链接预编译库，这样做的好处是：
+> - 代码完全可控，便于调试和修改
+> - 避免预编译库和工具链版本的兼容性问题
+> - 教学目的：可以看到 SDK 内部代码的执行过程
 
 ### 4.2 编译产物
 

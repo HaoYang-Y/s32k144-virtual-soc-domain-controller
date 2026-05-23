@@ -8,6 +8,49 @@
 
 ---
 
+## 🧩 SDK 说明
+
+本工程 MCU 代码基于 **NXP S32 SDK for S32K1xx (RTM 4.0.2)** 开发，SDK 位于
+`mcu/S32_SDK_S32K1xx_RTM_4.0.2/`。SDK 提供了完整的硬件抽象层（HAL）和外设驱动层（PD），
+封装了对寄存器的直接操作。
+
+### SDK 与书籍的关系
+
+| 方面 | 书籍（苏勇 著） | 本工程 SDK 方式 |
+|------|----------------|----------------|
+| 寄存器操作 | 手写 `*(volatile uint32_t*)addr` | SDK API：`FLEXCAN_DRV_Init()` 等 |
+| 外设驱动 | 逐寄存器配置 | SDK 驱动层：`flexcan_driver.h`、`lpuart_driver.h` |
+| 启动代码 | 手写 startup 汇编 | SDK 提供 `startup_S32K144.S` |
+| 时钟配置 | 手写 SCGOUT/SPLL 寄存器 | SDK 提供 `clock.h` + `CLOCK_SYS_*` API |
+| 链接脚本 | 书籍提供 | 复用工程 `mcu/s32k144_flash.ld` |
+
+### 学习策略
+
+> **"看懂原理，使用 SDK"**——学习计划中标记 📖 的章节为"看懂原理"部分，
+> 实际编写代码时调用 SDK API。每个外设的学习分为两步：
+> 1. 📖 阅读书籍对应章节，理解寄存器工作原理
+> 2. 🛠 查看 SDK 驱动头文件，使用 SDK API 实现功能
+
+例如 FlexCAN 模块：
+- 📖 读书籍第 10 章，理解 MCR/CTRL1/MB CODE 等寄存器含义
+- 🛠 实际代码中调用 `FLEXCAN_DRV_Init()`、`FLEXCAN_DRV_SendBlocking()` 等 API
+
+### SDK 头文件路径速查
+
+| 外设 | SDK 头文件（相对 SDK 根目录） | 常用 API 前缀 |
+|------|------------------------------|--------------|
+| FlexCAN | `platform/drivers/inc/flexcan_driver.h` | `FLEXCAN_DRV_*` |
+| UART (LPUART) | `platform/drivers/inc/lpuart_driver.h` | `LPUART_DRV_*` |
+| GPIO/Pins | `platform/drivers/inc/pins_driver.h` | `PINS_DRV_*` |
+| Timer (LPIT) | `platform/drivers/inc/lpit_driver.h` | `LPIT_DRV_*` |
+| Timer (LPTMR) | `platform/drivers/inc/lptmr_driver.h` | `LPTMR_DRV_*` |
+| ADC | `platform/drivers/inc/adc_driver.h` | `ADC_DRV_*` |
+| Clock | `platform/drivers/inc/clock.h` | `CLOCK_SYS_*` |
+| 中断管理 | `platform/drivers/inc/interrupt_manager.h` | `INT_SYS_*` |
+| 设备寄存器 | `platform/devices/S32K144.h` | `CAN0_BASE`、`PCC_CAN0` 等宏 |
+
+---
+
 ## ⚡ 硬件拓扑
 
 ```
