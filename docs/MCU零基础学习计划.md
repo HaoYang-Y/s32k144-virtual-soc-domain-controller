@@ -1,7 +1,6 @@
-# 🎯 学习计划 — CAN / SOME/IP / AUTOSAR 通信协议栈（配套 S32K14x 书籍）
+# 🎯 学习计划 — CAN / SOME/IP / AUTOSAR 通信协议栈（基于 NXP S32 SDK）
 
 > **目标人群**: 有 Linux C++ 基础，嵌入式 C 经验较少
-> **配套书籍**: 《汽车电子S32K系列微控制器——基于ARM Cortex-M4F内核》（苏勇 著）
 > **预计时长**: 8~12 周（每周 5~8 小时）
 > **核心产出**: S32K144 接收 CAN 帧 → 解析信号 → UART 传给 SOC → SOC 封装 SOME/IP 发送
 > **原则**: 聚焦 CAN 主线，先独立学各外设，再组合实现域控制器
@@ -14,25 +13,26 @@
 `mcu/S32_SDK_S32K1xx_RTM_4.0.2/`。SDK 提供了完整的硬件抽象层（HAL）和外设驱动层（PD），
 封装了对寄存器的直接操作。
 
-### SDK 与书籍的关系
+### SDK 说明：替代直接寄存器操作
 
-| 方面 | 书籍（苏勇 著） | 本工程 SDK 方式 |
-|------|----------------|----------------|
-| 寄存器操作 | 手写 `*(volatile uint32_t*)addr` | SDK API：`FLEXCAN_DRV_Init()` 等 |
-| 外设驱动 | 逐寄存器配置 | SDK 驱动层：`flexcan_driver.h`、`lpuart_driver.h` |
-| 启动代码 | 手写 startup 汇编 | SDK 提供 `startup_S32K144.S` |
-| 时钟配置 | 手写 SCGOUT/SPLL 寄存器 | SDK 提供 `clock.h` + `CLOCK_SYS_*` API |
-| 链接脚本 | 书籍提供 | 复用工程 `mcu/s32k144_flash.ld` |
+本工程使用 NXP S32 SDK 提供的 HAL/PD 层 API 替代直接寄存器操作，避免大量手写寄存器配置代码：
+
+| 传统方式 | SDK 方式 |
+|---------|---------|
+| 手写 `*(volatile uint32_t*)addr` | SDK API：`FLEXCAN_DRV_Init()` 等 |
+| 逐寄存器配置外设 | SDK 驱动层：`flexcan_driver.h`、`lpuart_driver.h` |
+| 手写 startup 汇编 | SDK 提供 `startup_S32K144.S` |
+| 手写 SCGOUT/SPLL 寄存器 | SDK 提供 `clock.h` + `CLOCK_SYS_*` API |
 
 ### 学习策略
 
-> **"看懂原理，使用 SDK"**——学习计划中标记 📖 的章节为"看懂原理"部分，
-> 实际编写代码时调用 SDK API。每个外设的学习分为两步：
-> 1. 📖 阅读书籍对应章节，理解寄存器工作原理
-> 2. 🛠 查看 SDK 驱动头文件，使用 SDK API 实现功能
+> **"理解原理，使用 SDK"**——先了解外设的基本工作原理，然后直接使用 SDK API 进行开发。
+> 每个外设的学习分为两步：
+> 1. 📖 阅读 SDK 头文件，理解外设功能和使用方式
+> 2. 🛠 调用 SDK API 实现功能
 
 例如 FlexCAN 模块：
-- 📖 读书籍第 10 章，理解 MCR/CTRL1/MB CODE 等寄存器含义
+- 📖 查看 `flexcan_driver.h` 中的 API 和配置结构体，理解初始化/发送/接收流程
 - 🛠 实际代码中调用 `FLEXCAN_DRV_Init()`、`FLEXCAN_DRV_SendBlocking()` 等 API
 
 ### SDK 头文件路径速查
@@ -172,40 +172,40 @@ arm-none-eabi-gcc --version
 
 > 直接跳到 CAN 通信核心。其他外设（GPIO/UART/TIMER/ADC）用到时再学。
 
-### Step 1：C 语言嵌入式必备知识点（配合书籍第 1~2 章）
+### Step 1：C 语言嵌入式必备知识点
 
 这是 MCU 编程的基础，需要掌握才能看懂寄存器操作：
 
-| 知识点 | 为什么重要 | 本项目应用 | 书籍对应 |
-|--------|-----------|-----------|---------|
-| **指针与地址操作** | 寄存器就是内存地址 | `*(volatile uint32_t*)addr = val;` | 1.3 节 |
-| **位运算**（&、\|、~、<<、>>） | 配置寄存器特定位 | `reg |= (1 << 5);` | 2.4 节 |
-| **volatile 关键字** | 防止编译器优化寄存器读取 | `volatile uint32_t` | 1.5 节 |
-| **结构体指针映射** | 分组访问外设寄存器 | `CAN_Type *can = (CAN_Type*)base;` | 2.5 节 |
-| **宏定义与枚举** | 寄存器地址/掩码抽象 | `#define MCR(x) *(volatile uint32_t*)((x) + 0x00)` | - |
-| **链接脚本** (.ld) | 内存布局、段定义 | `s32k144_flash.ld` | 3.3 节 |
+| 知识点 | 为什么重要 | 本项目应用 |
+|--------|-----------|-----------|
+| **指针与地址操作** | 寄存器就是内存地址 | `*(volatile uint32_t*)addr = val;` |
+| **位运算**（&、\|、~、<<、>>） | 配置寄存器特定位 | `reg |= (1 << 5);` |
+| **volatile 关键字** | 防止编译器优化寄存器读取 | `volatile uint32_t` |
+| **结构体指针映射** | 分组访问外设寄存器 | `CAN_Type *can = (CAN_Type*)base;` |
+| **宏定义与枚举** | 寄存器地址/掩码抽象 | `#define MCR(x) *(volatile uint32_t*)((x) + 0x00)` |
+| **链接脚本** (.ld) | 内存布局、段定义 | `s32k144_flash.ld` |
 
-### Step 2：时钟系统（配合书籍第 3 章）
+### Step 2：时钟系统
 
 > FlexCAN 的时钟源来自系统时钟，必须先配好时钟。
 
-| 书籍内容 | 项目对应代码 | 重点理解 |
-|---------|------------|---------|
-| 3.1 时钟系统概述 | `mcu/clock/README.md` | 时钟树结构 |
-| 3.2-3.5 配置流程 | `mcu/clock/src/clock_driver.c` | SCGOUT/SPLL/分频器 |
+| 项目对应代码 | 重点理解 |
+|------------|---------|
+| `mcu/clock/README.md` | 时钟树结构 |
+| `mcu/clock/src/clock_driver.c` | SCGOUT/SPLL/分频器 |
 
 ✅ **完成标准**: 系统时钟配置到 80MHz（SPLL），CAN 外设时钟使能
 
-### Step 3：FlexCAN 寄存器驱动（配合书籍第 10 章）
+### Step 3：FlexCAN 驱动
 
 > **核心目标**: S32K144 能通过 CAN 总线发送 CAN 帧，Ubuntu 虚拟机用 `candump` 收到。
 
-| 书籍内容 | 项目对应代码 | 重点理解 |
-|---------|------------|---------|
-| 10.1 CAN 协议基础 | `mcu/flexcan/README.md` | 帧格式、仲裁、位填充 |
-| 10.2 FlexCAN 概述 | `mcu/flexcan/include/flexcan_driver.h` | CAN 协议引擎 |
-| 10.3-10.4 寄存器描述 | `mcu/flexcan/src/flexcan_driver.c` | CTRL/MCR/IFLAG/MB |
-| 10.5-10.6 驱动实现 | flexcan_driver.c 中的 TODO | 初始化、发送、接收、中断 |
+| 项目对应代码 | 重点理解 |
+|------------|---------|
+| `mcu/flexcan/README.md` | CAN 帧格式、仲裁、位填充 |
+| `mcu/flexcan/include/flexcan_driver.h` | CAN 协议引擎 |
+| `mcu/flexcan/src/flexcan_driver.c` | CTRL/MCR/IFLAG/MB |
+| flexcan_driver.c 中的 TODO | 初始化、发送、接收、中断 |
 
 **验证方法**（独立模块测试）：
 ```
@@ -363,31 +363,13 @@ CAN 总线 ──► MCU (FlexCAN 收帧) ──► 信号解析 ──► UART 
 
 ## 阶段 5：UDS 诊断（ISO 14229）— 后续扩展
 
-| 书籍参考 | 关键服务 | 项目预留位置 |
-|---------|---------|-------------|
-| 后续 UDS 章节 | 0x10 会话控制 | `soc/src/uds_server/` |
-| (可参考其他资料) | 0x22 读 DID | `config/domain_config.yaml` uds 段 |
-| | 0x2E 写 DID | (待实现) |
-| | 0x19 读取 DTC | (待实现) |
+| 关键服务 | 项目预留位置 |
+|---------|-------------|
+| 0x10 会话控制 | `soc/src/uds_server/` |
+| 0x22 读 DID | `config/domain_config.yaml` uds 段 |
+| 0x2E 写 DID | (待实现) |
+| 0x19 读取 DTC | (待实现) |
 
----
-
-## 书籍配套指南：推荐阅读顺序
-
-```
-第 1~2 章   C 基础概览 (1 天)           ← 必须看
-    ↓
-第 3 章     时钟系统 (2 天)             ← 必须看，CAN 依赖
-    ↓
-第 10 章    FlexCAN (1~2 周)           ← ★ 核心
-    ↓
-可选（用到时再看）：
-  - 第 4 章  GPIO     ← 调试 LED 指示时
-  - 第 5 章  UART     ← domain_controller 联调必需
-  - 第 7 章  PIT      ← 需精确定时时
-  - 第 8 章  ADC      ← 需采集模拟信号时
-  - 第 9 章  FTM      ← 需 PWM 时
-```
 
 ---
 

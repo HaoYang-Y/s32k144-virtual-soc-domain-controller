@@ -331,14 +331,14 @@ q                        # 退出 JLinkExe
 
 ## 6. 模块清单
 
-| 模块 | 目录 | 目标名 | 对应书籍章节 |
-|------|------|--------|-------------|
-| GPIO | `mcu/gpio/` | `gpio_demo` | 第4章 GPIO及程序框架 |
-| UART | `mcu/uart/` | `uart_demo` | 第6章 串口通信 |
-| Timer | `mcu/timer/` | `timer_demo` | 第7章 定时器 |
-| ADC | `mcu/adc/` | `adc_demo` | 第10章 ADC模块 |
-| FlexCAN | `mcu/flexcan/` | `flexcan_demo` | 第11章 CAN总线 |
-| Clock | `mcu/clock/` | `clock_demo` | 第5章 时钟系统 |
+| 模块 | 目录 | 目标名 |
+|------|------|--------|
+| GPIO | `mcu/gpio/` | `gpio_demo` |
+| UART | `mcu/uart/` | `uart_demo` |
+| Timer | `mcu/timer/` | `timer_demo` |
+| ADC | `mcu/adc/` | `adc_demo` |
+| FlexCAN | `mcu/flexcan/` | `flexcan_demo` |
+| Clock | `mcu/clock/` | `clock_demo` |
 
 ---
 
