@@ -1,6 +1,6 @@
-# CAN 从零到驱动 —— S32K144 FlexCAN 教学文档
+# 从零学 CAN —— S32K144 FlexCAN SDK 入门教程
 
-> **目标读者**：有 Linux C++ 基础、没写过 MCU 驱动、不知道 CAN 是什么的开发者
+> **目标读者**：有 Linux C++ 基础、没写过 MCU SDK 应用、不知道 CAN 是什么的开发者
 > **配套项目**：Domain_Controller `mcu/src/flexcan.c` + `mcu/include/flexcan.h`
 > **学习方式**：按顺序读完各篇后，对照本文 SDK API 章节在 flexcan.c 中使用 NXP S32 SDK API
 > **核心原则**：只讲"为什么"和"怎么做"，全程用表格 + 伪代码 + 大白话
@@ -330,7 +330,7 @@ SDK 收发 API 内部自动管理 CODE 转换，无需手动操作。
 ```c
 #include "flexcan_driver.h"
 
-static flexcan_state_t g_flexState;   /* 驱动状态（必须全局/静态） */
+static flexcan_state_t g_flexState;   /* 模块状态（必须全局/静态） */
 
 status_t can_init(void)
 {
@@ -369,7 +369,7 @@ status_t can_init(void)
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `instance` | `uint8_t` | CAN 实例号：0=CAN0, 1=CAN1 |
-| `state` | `flexcan_state_t *` | 驱动状态变量（全局/静态，内部使用） |
+| `state` | `flexcan_state_t *` | 模块状态变量（全局/静态，内部使用） |
 | `config` | `const flexcan_user_config_t *` | 配置结构体 |
 
 ### 4.4 错误排查对照
