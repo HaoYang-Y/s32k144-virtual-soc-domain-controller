@@ -7,7 +7,7 @@
 
 ## 第一阶段：MCU CAN 通信基础（无 AUTOSAR）
 
-> **你已有 Linux 开发基础，MCU 寄存器开发不是重点。**
+> **你已有 Linux 开发基础，MCU 使用 SDK API，不涉及寄存器操作。**
 > 此阶段只关注 CAN 通信必须的最小知识集：C 嵌入式基础 + 时钟系统 + FlexCAN。
 > 其他外设（GPIO/UART/TIMER/ADC）用到时再学。
 
@@ -15,7 +15,7 @@
 
 ## 第二阶段：CAN 通信精进（附 AUTOSAR CP 概念）
 
-### 2.1 FlexCAN 寄存器驱动 → MCAL Can
+### 2.1 FlexCAN SDK 驱动 → MCAL Can
 
 | 你的代码 | AUTOSAR CP 概念 | 核心关系 |
 |---------|----------------|---------|
@@ -24,7 +24,7 @@
 | `flexcan_recv_msg()` | **Can_Read()** / **Can_RxIndication()** | 接收中断/查询读取 |
 | MB 缓冲区管理 | **CanHardwareObject** | 硬件对象对应消息缓冲区 |
 
-**一句话**: AUTOSAR CP 的 MCAL Can 层就是对 FlexCAN 寄存器的标准化封装。
+**一句话**: AUTOSAR CP 的 MCAL Can 层就是对 FlexCAN 驱动的标准化封装。
 
 ### 2.2 SocketCAN SOC 端 → CanIf
 

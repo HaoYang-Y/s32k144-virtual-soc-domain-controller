@@ -29,7 +29,6 @@
 - [学习路线](#-学习路线)
 - [项目结构](#-项目结构)
 - [快速开始](#-快速开始)
-- [配套书籍说明](#-配套书籍说明)
 - [License](#-license)
 
 ---
@@ -38,7 +37,7 @@
 
 | 阶段 | 目标 | 关联 AUTOSAR 概念 |
 |------|------|------------------|
-| **一：MCU 硬件基础** | 6 大外设寄存器编程 | — |
+| **一：MCU 硬件基础** | 6 大外设 SDK API 编程 | — |
 | **二：CAN 通信精进** | FlexCAN 驱动 + CAN 信号解析 + UART 传输 | MCAL Can, CanIf, PduR, Com, CanNm |
 | **三：SOME/IP 服务通信** | SOME/IP 协议 + 服务发现 + 序列化 | ara::com, ara::sd, E2E |
 | **四：UDS 诊断（后续）** | ISO 14229 诊断协议 | Dcm, Dem |
@@ -47,7 +46,6 @@
 
 - **有 Linux C++ 基础，想入门车载嵌入式** — 从 MCU 端开始，理解硬件原理
 - **想系统学习 CAN / SOME/IP 通信** — 双主线递进，理论基础 + 动手实践
-- **正在读《汽车电子S32K系列微控制器》** — 配套工程，边看书边动手
 - **对 AUTOSAR CP / AP 概念感兴趣** — 每阶段穿插概念对照，建立全局视野
 
 ---
@@ -103,7 +101,7 @@
         ↕                        结构化信号 (解析后)
    MCU 信号层             CAN 信号解析 / DBC 映射
         ↕                        CAN 帧
-   MCAL 层                FlexCAN 寄存器驱动 / MCAL Can
+   MCAL 层                FlexCAN SDK 驱动 / MCAL Can
         ↕
    硬件层                 S32K144 CAN 收发器 / CAN 总线
 ```
@@ -120,7 +118,7 @@
 第一阶段：MCU 硬件基础 (GPIO→UART→TIMER→ADC→Clock)
          ↓
 第二阶段：CAN 通信精进 ───────── 附 AUTOSAR CP 概念
-  ├ FlexCAN 寄存器驱动
+  ├ FlexCAN SDK 驱动
   ├ MCU 端 CAN 信号解析 (DBC)
   ├ MCU 端 UART 传输协议
   ├ SOC 端 UART 接收 + 信号融合
@@ -154,14 +152,11 @@ s32k144-virtual-soc-domain-controller/
 │   └── domain_config.yaml     ← CAN/UART/SOMEIP 配置
 │
 ├── mcu/                       ← ★ MCU 端核心代码
-│   ├── s32k144_flash.ld       ← 链接脚本（共享）
-│   ├── gpio/                  ← GPIO 模块（书籍第 4 章）
-│   ├── uart/                  ← UART 模块（书籍第 5 章）
-│   ├── timer/                 ← 定时器模块（书籍第 7/9 章）
-│   ├── adc/                   ← ADC 模块（书籍第 8 章）
-│   ├── flexcan/               ← ★ FlexCAN 模块（书籍第 10 章）
-│   ├── clock/                 ← 时钟模块（书籍第 3 章）
-│   └── domain_controller/     ← ★ 域控制器应用（FlexCAN + UART 联调，待实现）
+│   ├── include/               ← MCU 外设头文件（SDK API 声明）
+│   ├── src/                   ← MCU 外设源文件（SDK API 实现）
+│   ├── S32_SDK_S32K1xx_RTM_4.0.2/  ← NXP 官方 S32 SDK
+│   ├── s32k144_flash.ld       ← 链接脚本
+│   └── Makefile               ← 统一构建文件
 │
 ├── soc/                       ← SOC 端（TODO 骨架）
 │   ├── CMakeLists.txt
@@ -197,17 +192,17 @@ sudo apt install gcc-arm-none-eabi make
 ### 第二步：完成 MCU 硬件基础
 
 ```bash
-# 测试 GPIO 模块编译
-cd mcu/gpio && make
+# 编译 MCU 端所有模块
+cd mcu && make
 
-# 按照 docs/MCU零基础学习计划.md 逐一填充 TODO
+# 按照 docs/MCU零基础学习计划.md 逐一学习各个外设
 ```
 
 ### 第三步：CAN + UART 联调
 
 ```bash
-# MCU 端：编译 domain_controller 应用
-cd mcu/domain_controller && make
+# MCU 端：编译全部模块
+cd mcu && make
 
 # SOC 端：编译 UART 接收 + 信号融合
 cd soc && mkdir -p build && cd build
@@ -216,28 +211,6 @@ cmake .. && make
 # SOC 端启动接收（USB-UART 接入）
 ./soc_app /dev/ttyUSB0 115200
 ```
-
----
-
-## 📖 配套书籍说明
-
-本项目是 **《汽车电子S32K系列微控制器——基于ARM Cortex-M4F内核》**（苏勇 著）的配套工程。
-
-### 章节对应关系
-
-| 书籍章节 | 项目模块 | 学习重点 |
-|---------|---------|---------|
-| 第 1~2 章 | — | ARM Cortex-M4F 基础、S32K14x 概览 |
-| 第 3 章 | `mcu/clock/` | 时钟树、SPLL 配置 |
-| 第 4 章 | `mcu/gpio/` | GPIO 寄存器（PDOR/PSOR/PCOR/PDIR/PDDR） |
-| 第 5 章 | `mcu/uart/` | LPUART 波特率计算、异步串行通信 |
-| 第 7 章 | `mcu/timer/` | PIT 周期中断定时器 |
-| 第 8 章 | `mcu/adc/` | 逐次逼近型 ADC、12bit 采样 |
-| 第 9 章 | `mcu/timer/`（FTM） | PWM 输出、输入捕获 |
-| 第 10 章 | `mcu/flexcan/` | ★ CAN 协议、FlexCAN 报文收发 |
-| 第 11 章 | — | FreeRTOS（后续扩展） |
-
----
 
 ## 🔌 硬件要求
 
@@ -261,4 +234,4 @@ cmake .. && make
 > **一句话总结**
 >
 > CAN 总线 → MCU 接收解析 → UART 传输 → SOC 融合 → SOME/IP 发布。
-> 从寄存器到服务，逐层递进，学完每个模块形成完整域控制器链路。
+> 从 SDK API 到服务，逐层递进，学完每个模块形成完整域控制器链路。
