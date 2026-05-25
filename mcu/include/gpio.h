@@ -18,6 +18,7 @@ typedef enum {
     GPIO_PORT_B = 1,
     GPIO_PORT_C = 2,
     GPIO_PORT_D = 3,
+    GPIO_PORT_E = 4,
 } gpio_port_t;
 
 /** @brief GPIO 方向 */

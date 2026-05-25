@@ -24,13 +24,13 @@ UNAME_CMD:=uname
 OS_DETECTED:=$(shell $(UNAME_CMD))
 
 ifeq ($(OS_DETECTED), )
-	CC_SEARCH:=where $(CC)
+	CC_SEARCH:=which $(CC)
 	mkdir=mkdir_windows
 	clean_target=clean_windows
 	env_predetection_msg=Checked for '$(UNAME_CMD)', not found
 	env_detected_msg=Assuming Windows environment
 else
-	CC_SEARCH:=where $(CC)
+	CC_SEARCH:=which $(CC)
 	mkdir=mkdir_linux
 	clean_target=clean_linux
 	env_predetection_msg=Checked for '$(UNAME_CMD)', found: $(OS_DETECTED)

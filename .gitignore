@@ -20,6 +20,8 @@ soc/build/
 # ---- 编译缓存 ----
 *.d
 __pycache__/
+obj_flash/
+obj_ram/
 
 # ---- PDF 文件 ----
 *.pdf

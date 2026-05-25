@@ -97,10 +97,10 @@ ASFLAGS_FLASH:=-x assembler-with-cpp -DSTART_FROM_FLASH
 
 ## Linker flags
 LDFLAGS_RAM:=-Wl,-Map=$(MAP_RAM)
-LDFLAGS_RAM+=-nostartfiles -nodefaultlibs -nostdlib -T "$(BASEDIR)\platform\devices\S32K144\linker\gcc\S32K144_64_ram.ld" --entry=Reset_Handler -Wl,-gc-sections
+LDFLAGS_RAM+=-nostartfiles -nodefaultlibs -nostdlib -T "$(BASEDIR)/platform/devices/S32K144/linker/gcc/S32K144_64_ram.ld" --entry=Reset_Handler -Wl,-gc-sections
 LDFLAGS_RAM+=-lgcc -lm -lc -lrdimon --specs=rdimon.specs
 LDFLAGS_FLASH:=-Wl,-Map=$(MAP_FLASH)
-LDFLAGS_FLASH+=-nostartfiles -nodefaultlibs -nostdlib -T "$(BASEDIR)\platform\devices\S32K144\linker\gcc\S32K144_64_flash.ld" --entry=Reset_Handler -Wl,-gc-sections
+LDFLAGS_FLASH+=-nostartfiles -nodefaultlibs -nostdlib -T "$(BASEDIR)/platform/devices/S32K144/linker/gcc/S32K144_64_flash.ld" --entry=Reset_Handler -Wl,-gc-sections
 LDFLAGS_FLASH+=-lgcc -lm -lc -lrdimon --specs=rdimon.specs
 
 include Makefile-arm

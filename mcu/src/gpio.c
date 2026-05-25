@@ -3,7 +3,7 @@
  *        通过直接操作寄存器实现 GPIO 输入/输出功能
  *
  * @note 参考: S32K1xx Reference Manual, Chapter 46 (GPIO), Chapter 47 (PORT)
- *       对应书籍：第4章 §4.2~§4.3
+ *       S32K144 共有 5 个 GPIO 端口: PORTA ~ PORTE
  *
  *       关键寄存器（GPIO 模块）：
  *         - PDOR: 端口数据输出寄存器 (偏移 0x00)
@@ -52,12 +52,23 @@ typedef struct {
     volatile uint32_t ISFR;       /**< 中断状态标志寄存器 (偏移 0x90) */
 } port_regs_t;
 
-/* ========== PORT 模块基地址 ========== */
-/* S32K1xx RM §47.4: PORT memory map */
+/* ========== GPIO / PORT 模块基地址 ========== */
+/* S32K1xx RM §46.3: GPIO memory map (GPIO 非连续地址)
+ *   PTA=0x400FF000, PTB=0x400FF040, PTC=0x400FF080, PTD=0x400FF0C0
+ * S32K1xx RM §47.4: PORT memory map (PORT 非连续地址)
+ *   PORTA=0x40049000, PORTB=0x4004A000, PORTC=0x4004B000, PORTD=0x4004C000
+ */
+#define GPIO_PTA_BASE  (0x400FF000u)
+#define GPIO_PTB_BASE  (0x400FF040u)
+#define GPIO_PTC_BASE  (0x400FF080u)
+#define GPIO_PTD_BASE  (0x400FF0C0u)
+#define GPIO_PTE_BASE  (0x400FF100u)
+
 #define PORT_PTA_BASE  (0x40049000u)
 #define PORT_PTB_BASE  (0x4004A000u)
 #define PORT_PTC_BASE  (0x4004B000u)
 #define PORT_PTD_BASE  (0x4004C000u)
+#define PORT_PTE_BASE  (0x4004D000u)
 
 /* ========== 寄存器基址映射 ========== */
 
@@ -67,6 +78,7 @@ static gpio_regs_t *const g_gpio_base[] = {
     (gpio_regs_t *)GPIO_PTB_BASE,  /* PORT B */
     (gpio_regs_t *)GPIO_PTC_BASE,  /* PORT C */
     (gpio_regs_t *)GPIO_PTD_BASE,  /* PORT D */
+    (gpio_regs_t *)GPIO_PTE_BASE,  /* PORT E */
 };
 
 /* PORT 模块基地址（注意：PORT 与 GPIO 是独立的两个模块，地址不连续）*/
@@ -75,6 +87,7 @@ static port_regs_t *const g_port_base[] = {
     (port_regs_t *)PORT_PTB_BASE,  /* PORTB @ 0x4004A000 */
     (port_regs_t *)PORT_PTC_BASE,  /* PORTC @ 0x4004B000 */
     (port_regs_t *)PORT_PTD_BASE,  /* PORTD @ 0x4004C000 */
+    (port_regs_t *)PORT_PTE_BASE,  /* PORTE @ 0x4004D000 */
 };
 
 /* ========== 时钟门控 (PCC) 定义 ========== */
@@ -106,7 +119,7 @@ static port_regs_t *const g_port_base[] = {
  */
 static int check_param(gpio_port_t port, uint8_t pin)
 {
-    if (port > GPIO_PORT_D)
+    if (port > GPIO_PORT_E)
     {
         return -1;
     }
