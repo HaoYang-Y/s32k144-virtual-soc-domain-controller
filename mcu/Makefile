@@ -17,10 +17,14 @@ SDK_DIR := S32_SDK_S32K1xx_RTM_4.0.2
 
 # ---------- 头文件路径 ----------
 INCLUDES  := -I./include
+INCLUDES  += -I./mcal
 INCLUDES  += -I$(SDK_DIR)/platform/devices
 INCLUDES  += -I$(SDK_DIR)/platform/devices/S32K144
 INCLUDES  += -I$(SDK_DIR)/platform/devices/S32K144/include
 INCLUDES  += -I$(SDK_DIR)/platform/devices/common
+INCLUDES  += -I$(SDK_DIR)/platform/drivers/inc
+INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/pins
+INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/clock/S32K1xx
 
 # ---------- 编译标志 ----------
 CFLAGS  := -mcpu=$(MCU) $(FPU) -mthumb
@@ -49,15 +53,14 @@ LDFLAGS += -lgcc -lm -lc -lrdimon
 LDFLAGS += --specs=rdimon.specs
 
 # ---------- 源文件 ----------
-# 用户源文件
-SRCS_USER  := src/main.c
-SRCS_USER  += src/gpio.c
-# 以下模块写了但还未调试通，后续逐步启用
-# SRCS_USER  += src/adc.c
-# SRCS_USER  += src/clock.c
-# SRCS_USER  += src/timer.c
-# SRCS_USER  += src/uart.c
-# SRCS_USER  += src/flexcan.c
+# 用户源文件 (MCAL 层)
+SRCS_USER  := mcal/GpioDrv.c
+SRCS_USER  += mcal/McuDrv.c
+
+# SDK drivers 源文件
+SRCS_SDK_DRV  := $(SDK_DIR)/platform/drivers/src/pins/pins_driver.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/pins/pins_port_hw_access.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/clock/S32K1xx/clock_S32K1xx.c
 
 # SDK 启动和系统文件
 SRCS_SDK  := $(SDK_DIR)/platform/devices/startup.c
@@ -67,7 +70,7 @@ SRCS_SDK  += $(SDK_DIR)/platform/devices/S32K144/startup/system_S32K144.c
 ASM_SDK  := $(SDK_DIR)/platform/devices/S32K144/startup/gcc/startup_S32K144.S
 
 # 汇总所有源文件和生成的目标文件
-ALL_SRCS := $(SRCS_USER) $(SRCS_SDK)
+ALL_SRCS := $(SRCS_USER) $(SRCS_SDK_DRV) $(SRCS_SDK)
 OBJS     := $(ALL_SRCS:.c=.o)
 OBJS     += $(ASM_SDK:.S=.o)
 
