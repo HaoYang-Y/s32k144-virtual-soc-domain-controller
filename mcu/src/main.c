@@ -1,101 +1,80 @@
-/*
- * @brief S32K144 域控制器 MCU 端主程序
+/**
+ * @brief AUTOSAR CP MCAL 层裸机应用入口
  *
- * @note 最小功能验证版本:
- *       1. 初始化 GPIO (PTD15 红色LED, PTD16 绿色LED)
- *       2. 循环交替闪烁两个 LED
+ * 演示 AUTOSAR CP 中 MCAL 驱动程序的标准使用方式：
+ *   1. Mcu 驱动初始化系统时钟
+ *   2. Gpio 驱动初始化 IO 引脚
+ *   3. 主循环中通过 MCAL 接口操作 GPIO
  *
- *       S32K144-EVB 开发板 LED 引脚 (实际连线):
- *         - 红色 LED (LED4): PTD15
- *         - 绿色 LED (LED5): PTD16
+ * @note S32K144-EVB 蓝色 LED 连接在 PTD15，低电平点亮
  */
-#include "gpio.h"
 
-/** @brief LED 引脚定义 (S32K144-EVB) */
-#define LED_RED_PORT     GPIO_PORT_D
-#define LED_RED_PIN      15u
-#define LED_GREEN_PORT   GPIO_PORT_D
-#define LED_GREEN_PIN    16u
+#include "McuDrv.h"
+#include "GpioDrv.h"
 
-/** @brief LED 闪烁间隔 (毫秒) */
-#define BLINK_DELAY_MS   500u
+/* ========== GPIO 通道配置 ========== */
+
+/** @brief LED 通道配置表 (PTD15 = 蓝色 LED, 输出, 无上下拉) */
+static const GpioDrv_ChannelCfgType channel_cfgs[] = {
+    {
+        .channel   = GPIO_CH(3, 15),  /**< PTD15: 端口 D 引脚 15 (蓝色 LED) */
+        .direction = GPIO_CFG_DIR_OUTPUT,
+        .pull      = GPIO_CFG_PULL_DISABLE,
+    },
+};
+
+/** @brief GPIO 驱动总配置 */
+static const GpioDrv_ConfigType gpio_cfg = {
+    .num_channels = 1,
+    .channels     = channel_cfgs,
+};
+
+/* ========== 简易延时 ========== */
 
 /**
- * @brief 系统初始化
+ * @brief 简易软件延时（阻塞）
  *
- * 初始化 GPIO 作为 LED 输出
+ * @param[in]  cycles  延时循环次数，约为 cycles × 若干指令周期
  *
- * @return 0=成功
+ * @note 实测 FIRC 48MHz 下，cycles=2000000 约延时 500ms
  */
-static int system_init(void)
+static void delay_loop(volatile uint32_t cycles)
 {
-    /* 初始化红色 LED 引脚: PTD15, 输出, 无上下拉 */
-    int ret = gpio_init(LED_RED_PORT, LED_RED_PIN,
-                        GPIO_DIR_OUTPUT, GPIO_PULL_DISABLE);
-    if (ret != 0)
-    {
-        return -1;
+    while (cycles > 0) {
+        cycles--;
     }
-
-    /* 初始化绿色 LED 引脚: PTD16, 输出, 无上下拉 */
-    ret = gpio_init(LED_GREEN_PORT, LED_GREEN_PIN,
-                    GPIO_DIR_OUTPUT, GPIO_PULL_DISABLE);
-    if (ret != 0)
-    {
-        return -1;
-    }
-
-    return 0;
 }
 
+/* ========== 入口函数 ========== */
+
 /**
- * @brief 主函数
+ * @brief C 程序主入口
  *
- * 循环交替闪烁两个 LED:
- *   - 绿色LED亮 + 蓝色LED灭 → 延时 500ms
- *   - 绿色LED灭 + 蓝色LED亮 → 延时 500ms
+ * 在 AUTOSAR CP 裸机环境中：
+ * - 上电后由 startup_S32K144.S 的 Reset_Handler 调用
+ * - 完成 MCAL 各驱动初始化后进入应用主循环
  *
- * @return 永不返回 (死循环)
+ * @return 无返回值（裸机程序永不退出）
  */
 int main(void)
 {
-    int      ret;
-    uint32_t i;
+    /* —— Step 1: 初始化 MCU 时钟 （MCAL Mcu 驱动） —— */
+    /* 使用默认 FIRC 48MHz, Core/Bus 均运行在 48MHz */
+    Mcu_InitClock(NULL);
 
-    ret = system_init();
+    /* —— Step 2: 初始化 GPIO 驱动 （MCAL Gpio 驱动） —— */
+    /* 配置 PTD15 为输出模式 */
+    GpioDrv_Init(&gpio_cfg);
 
-    if (ret != 0)
-    {
-        /* 初始化失败: 红色 LED 慢闪 1Hz 错误提示 */
-        while (1)
-        {
-            gpio_write(LED_RED_PORT, LED_RED_PIN, true);
-            gpio_delay_ms(500u);
-            gpio_write(LED_RED_PORT, LED_RED_PIN, false);
-            gpio_delay_ms(500u);
-        }
+    /* —— Step 3: 主循环 —— */
+    /* 通过 MCAL 接口控制 GPIO，实现 LED 闪烁 */
+    while (1) {
+        /* 点亮 LED (PTD15 低电平点亮) */
+        Gpio_WritePin(GPIO_CH(3, 15), false);
+        delay_loop(2000000);
+
+        /* 熄灭 LED (PTD15 高电平熄灭) */
+        Gpio_WritePin(GPIO_CH(3, 15), true);
+        delay_loop(2000000);
     }
-
-    /* 初始化成功: 红灯快闪 3 次，确认程序运行 */
-    for (i = 0; i < 3u; i++)
-    {
-        gpio_write(LED_RED_PORT, LED_RED_PIN, true);
-        gpio_delay_ms(BLINK_DELAY_MS / 3u);
-        gpio_write(LED_RED_PORT, LED_RED_PIN, false);
-        gpio_delay_ms(BLINK_DELAY_MS / 3u);
-    }
-
-    /* 主循环: 两个 LED 交替闪烁 */
-    while (1)
-    {
-        gpio_write(LED_RED_PORT, LED_RED_PIN, true);
-        gpio_write(LED_GREEN_PORT, LED_GREEN_PIN, false);
-        gpio_delay_ms(BLINK_DELAY_MS);
-
-        gpio_write(LED_RED_PORT, LED_RED_PIN, false);
-        gpio_write(LED_GREEN_PORT, LED_GREEN_PIN, true);
-        gpio_delay_ms(BLINK_DELAY_MS);
-    }
-
-    return 0;
 }

@@ -61,27 +61,22 @@ JLinkExe -Version
 
 ---
 
+> **当前 MCU 代码结构已重构为 MCAL 层（直接寄存器操作，AUTOSAR CP 命名规范）。**
+> 详见 `mcu/mcal/` 目录。
+
 ## 3. 工程结构
 
 ```
 Domain_Controller/
 ├── mcu/
 │   ├── Makefile                  # 顶层构建脚本
-│   ├── include/                  # 各外设驱动头文件
-│   │   ├── gpio.h                # GPIO 驱动 API
-│   │   ├── uart.h                # UART 驱动 API
-│   │   ├── timer.h               # Timer 驱动 API
-│   │   ├── adc.h                 # ADC 驱动 API
-│   │   ├── flexcan.h             # FlexCAN 驱动 API
-│   │   └── clock.h               # 时钟配置 API
-│   ├── src/                      # 各外设驱动源文件
-│   │   ├── main.c                # 主程序（LED 闪烁 demo）
-│   │   ├── gpio.c                # GPIO 驱动实现（直接寄存器操作）
-│   │   ├── uart.c                # UART 驱动实现
-│   │   ├── timer.c               # Timer 驱动实现
-│   │   ├── adc.c                 # ADC 驱动实现
-│   │   ├── flexcan.c             # FlexCAN 驱动实现
-│   │   └── clock.c               # 时钟配置实现
+│   ├── mcal/                     # ★ MCAL 层（AUTOSAR CP 命名规范）
+│   │   ├── GpioDrv.h / GpioDrv.c # GPIO 驱动（直接寄存器操作）
+│   │   ├── McuDrv.h / McuDrv.c   # 时钟配置（直接寄存器操作）
+│   │   ├── AdcDrv.h / AdcDrv.c   # ADC 驱动（后续）
+│   │   └── PwmDrv.h / PwmDrv.c   # PIT 定时器驱动（后续）
+│   ├── src/
+│   │   └── main.c                # 主程序
 │   └── S32_SDK_S32K1xx_RTM_4.0.2/  # NXP S32 SDK（预置）
 │       ├── platform/devices/
 │       │   ├── startup.c                         # SDK C 启动代码
@@ -121,14 +116,14 @@ S32K144 的内存布局：
 
 | 文件 | 说明 |
 |------|------|
-| `src/main.c` | 主程序（LED 交替闪烁） |
-| `src/gpio.c` | GPIO 驱动（直接寄存器操作） |
+| `src/main.c` | 主程序 |
+| `mcal/GpioDrv.c` | GPIO 驱动（直接寄存器操作，AUTOSAR CP 命名） |
+| `mcal/McuDrv.c` | 时钟配置（直接寄存器操作） |
 | SDK `startup.c` | SDK C 启动代码 |
 | SDK `system_S32K144.c` | 系统初始化 |
 | SDK `startup_S32K144.S` | 汇编启动文件（中断向量表） |
 
-后续模块（adc、uart、timer、flexcan、clock）已编写但未启用，在 Makefile 中以注释形式保留，
-调试通过后逐步取消注释。
+后续模块（AdcDrv、PwmDrv（PIT）、SPI、FlexCAN）按 TaskPlan 周计划逐步添加。
 
 ### 4.2 Makefile 关键参数
 
@@ -256,18 +251,19 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 
 ## 6. 模块清单
 
-| 模块     | 源文件              | 头文件              | 状态       |
-|----------|---------------------|---------------------|------------|
-| Main     | `src/main.c`        | `gpio.h`            | ✅ 已验证  |
-| GPIO     | `src/gpio.c`        | `include/gpio.h`    | 🔄 迁移中  |
-| ADC      | `src/adc.c`         | `include/adc.h`     | ⏳ 待调试  |
-| Clock    | `src/clock.c`       | `include/clock.h`   | ⏳ 待调试  |
-| Timer    | `src/timer.c`       | `include/timer.h`   | ⏳ 待调试  |
-| UART     | `src/uart.c`        | `include/uart.h`    | ⏳ 待调试  |
-| FlexCAN  | `src/flexcan.c`     | `include/flexcan.h` | ⏳ 待调试  |
+| 模块     | 源文件              | AUTOSAR CP 对应 | 状态       |
+|----------|---------------------|----------------|------------|
+| Main     | `src/main.c`        | —              | ✅ 已验证  |
+| GPIO     | `mcal/GpioDrv.c`    | Gpio           | ✅ 已验证  |
+| Clock    | `mcal/McuDrv.c`     | Mcu            | ✅ 已验证  |
+| ADC      | `mcal/AdcDrv.c`     | Adc            | ⏳ 待实现  |
+| PIT      | `mcal/PwmDrv.c`     | Pwm (PIT)      | ⏳ 待实现  |
+| SPI      | `mcal/SpiDrv.c`     | Spi            | ⏳ 待实现  |
+| FlexCAN  | `mcal/CanDrv.c`     | Can            | ⏳ 待实现  |
 
-> **说明**：GPIO 驱动当前使用直接寄存器操作（`gpio.c`），
-> 正在迁移到 SDK PINS_DRV API。其他外设模块将直接使用 SDK DRV 层 API 开发。
+> **说明**：MCAL 层全部使用直接寄存器操作（学习目的），API 命名遵循 AUTOSAR CP 规范
+> （`Gpio_ReadPin`、`Mcu_InitClock`、`Can_Transmit` 等）。
+> 后续学完寄存器操作后可迁移到 SDK DRV 层 API。
 
 ---
 
@@ -343,7 +339,7 @@ SDK 的 `startup.c` 中存在一个 `-Warray-compare` 的 warning，
 | 文件                                                              | 说明                        |
 |-------------------------------------------------------------------|-----------------------------|
 | `mcu/Makefile`                                                     | 顶层构建脚本                |
-| `mcu/src/main.c`                                                   | 主程序（LED 闪烁 demo）      |
-| `mcu/src/gpio.c`                                                   | GPIO 驱动                   |
-| `mcu/include/gpio.h`                                               | GPIO 驱动头文件              |
+| `mcu/src/main.c`                                                   | 主程序                      |
+| `mcu/mcal/GpioDrv.h` / `GpioDrv.c`                                | GPIO MCAL 驱动              |
+| `mcu/mcal/McuDrv.h` / `McuDrv.c`                                  | 时钟 MCAL 驱动              |
 | `mcu/S32_SDK_S32K1xx_RTM_4.0.2/platform/devices/S32K144/linker/gcc/S32K144_64_flash.ld` | 官方链接脚本 |

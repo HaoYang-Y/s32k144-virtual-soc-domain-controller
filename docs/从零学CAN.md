@@ -1,10 +1,13 @@
-# 从零学 CAN —— S32K144 FlexCAN SDK 入门教程
+# 从零学 CAN —— S32K144 FlexCAN 教程
 
 > **目标读者**：有 Linux C++ 基础、没写过 MCU SDK 应用、不知道 CAN 是什么的开发者
-> **配套项目**：Domain_Controller `mcu/src/flexcan.c` + `mcu/include/flexcan.h`
-> **学习方式**：按顺序读完各篇后，对照本文 SDK API 章节在 flexcan.c 中使用 NXP S32 SDK API
+> **学习方式**：按顺序读完各篇后对照本文理解 CAN 概念和 SDK 使用模式
 > **核心原则**：只讲"为什么"和"怎么做"，全程用表格 + 伪代码 + 大白话
-> **开发方式**：本工程使用 NXP S32 SDK API 开发，不涉及直接寄存器操作
+
+> **⚠️ 当前项目现状**: 本工程 MCAL 层已改为直接寄存器操作（AUTOSAR CP 命名规范），
+> CAN 驱动将在 `mcu/mcal/CanDrv.c` 中以 `Can_Init()`、`Can_Transmit()` 等接口实现。
+> 本文中 SDK DRV API 内容（`FLEXCAN_DRV_*`）作为概念理解参考，
+> 帮助理解 FlexCAN 模块和 SDK 封装模式。理解后即可自行用寄存器实现 MCAL 层 API。
 
 ---
 

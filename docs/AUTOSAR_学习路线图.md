@@ -7,9 +7,9 @@
 
 ## 第一阶段：MCU CAN 通信基础（无 AUTOSAR）
 
-> **你已有 Linux 开发基础，MCU 使用 SDK API，不涉及寄存器操作。**
+> **你已有 Linux 开发基础，MCU 端 MCAL 层直接操作寄存器（学习目的）。**
 > 此阶段只关注 CAN 通信必须的最小知识集：C 嵌入式基础 + 时钟系统 + FlexCAN。
-> 其他外设（GPIO/UART/TIMER/ADC）用到时再学。
+> 其他外设（GPIO/SPI/TIMER/ADC）用到时再学。
 
 ---
 
@@ -36,15 +36,15 @@
 
 **一句话**: CanIf 层让上层网络协议（如 DoIP、J1939）不关心底层是哪个 CAN 控制器。
 
-### 2.3 CAN 信号解析 → PduR + Com
+### 2.3 SPI 通信 → Com Stack + Spi
 
 | 你的代码 | AUTOSAR CP 概念 | 核心关系 |
 |---------|----------------|---------|
-| `ConfigManager` 加载信号表 | **PduR (PDU 路由器)** | 定义信号与 CAN ID 的映射 |
-| `SignalManager` 提取物理值 | **Com (通信管理器)** | 从 PDU 提取信号、信号变化通知 |
-| `start_bit/length/scale` | **Com_Signal** | 信号属性定义（DBC 风格） |
+| `ComStack_ProcessSpi()` | **PduR** + **Com** | 差分编码 + 信号→PDU 编解码 |
+| `Spi_WriteIb()` / `Spi_ReadIb()` | **Spi** (MCAL) | SPI 32B 固定帧收发 |
+| CRC8 校验 / 差分 mask | **E2E_P01** (CP) | 数据完整性保护 |
 
-**一句话**: PduR 管"这个 CAN 帧路由去哪里"，Com 管"这个帧里的信号是什么值"。
+**一句话**: MCU 端 Com Stack 通过 SPI 发送差分帧给 SOC，同时 FlexCAN 发送 CAN 帧给其他域控制器——SPI 和 CAN 是 MCU 端两个并行的输出通道。
 
 ### 2.4 CAN 网络管理 → CanNm
 
@@ -115,6 +115,9 @@
   │              硬件层 (当前动手区)                        │
   │   S32K144 FlexCAN ─── USB-CAN 工具 ─── SocketCAN      │
   │   (物理 MCU)          (USB 桥接)        (Ubuntu 虚拟机) │
+  │                                                       │
+  │   S32K144 LPSPI ──── FT2232H (SPI Slave) ── Ubuntu     │
+  │   (SPI Master)       (USB-SPI 桥)          (libmpsse)  │
   └────────────────────────────────────────────────────────┘
 ```
 

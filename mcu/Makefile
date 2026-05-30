@@ -18,6 +18,7 @@ SDK_DIR := S32_SDK_S32K1xx_RTM_4.0.2
 # ---------- 头文件路径 ----------
 INCLUDES  := -I./include
 INCLUDES  += -I./mcal
+INCLUDES  += -I./src
 INCLUDES  += -I$(SDK_DIR)/platform/devices
 INCLUDES  += -I$(SDK_DIR)/platform/devices/S32K144
 INCLUDES  += -I$(SDK_DIR)/platform/devices/S32K144/include
@@ -56,6 +57,7 @@ LDFLAGS += --specs=rdimon.specs
 # 用户源文件 (MCAL 层)
 SRCS_USER  := mcal/GpioDrv.c
 SRCS_USER  += mcal/McuDrv.c
+SRCS_USER  += src/main.c
 
 # SDK drivers 源文件
 SRCS_SDK_DRV  := $(SDK_DIR)/platform/drivers/src/pins/pins_driver.c
