@@ -1,0 +1,80 @@
+/**
+ * @file    signal_gateway.proto
+ * @brief   MCU ↔ SOC SPI 通信协议定义 (Protocol Buffers)
+ *
+ * @note    同时生成:
+ *          MCU:  nanopb (C, 静态内存)  → mcu/proto/
+ *          SOC:  protoc (C++, STL)      → soc/proto/
+ *
+ *          一帧 SPI 消息 = 4B 帧头 + varint_len + protobuf_payload + 1B CRC8
+ */
+
+syntax = "proto3";
+
+package domain_controller;
+
+/* ===================================================================
+ *  MCU → SOC: 车辆信号上报
+ * =================================================================== */
+
+message VehicleSignals {
+  uint32 timestamp_ms    = 1;   /* MCU 时间戳 (ms) */
+
+  /* --- 动力域 (0x100) --- */
+  uint32 vehicle_speed    = 2;   /* 车速, 0.01 km/h */
+  uint32 engine_rpm       = 3;   /* 引擎转速, 0.125 rpm */
+  uint32 accelerator_pedal = 4;  /* 加速踏板, 0.4 % */
+  uint32 brake_position   = 5;   /* 制动位置, 0.4 % */
+
+  /* --- 车身域 (0x200) --- */
+  sint32 steering_angle   = 6;   /* 转向角, 0.1 deg (offset -780) */
+  sint32 yaw_rate         = 7;   /* 横摆角速度, 0.01 deg/s */
+  sint32 longitudinal_accel = 8; /* 纵向加速度, 0.01 m/s^2 */
+
+  /* --- 环境 (0x300) --- */
+  sint32 ambient_temp     = 9;   /* 环境温度, 0.1 degC (offset -40) */
+  uint32 battery_voltage  = 10;  /* 电池电压, 0.001 V */
+  uint32 door_status      = 11;  /* 车门状态, 位掩码 */
+}
+
+/* ===================================================================
+ *  SOC → MCU: 控制指令下发
+ * =================================================================== */
+
+message ControlCommand {
+  uint32 timestamp_ms     = 1;   /* SOC 时间戳 */
+
+  oneof command {
+    CanTxRequest   can_tx       = 2;
+    GpioControl    gpio         = 3;
+    ConfigUpdate   config       = 4;
+  }
+}
+
+message CanTxRequest {
+  uint32 can_id     = 1;
+  bytes  data       = 2;         /* 0-8 字节 */
+  bool   is_extended = 3;
+}
+
+message GpioControl {
+  uint32 pin_mask   = 1;
+  uint32 set_mask   = 2;
+  uint32 clear_mask = 3;
+}
+
+message ConfigUpdate {
+  uint32 param_id   = 1;
+  uint32 value      = 2;
+}
+
+/* ===================================================================
+ *  MCU → SOC: 心跳/状态
+ * =================================================================== */
+
+message Heartbeat {
+  uint32 uptime_ms       = 1;    /* 运行时间 */
+  uint32 can_tx_count    = 2;    /* CAN 发送帧计数 */
+  uint32 spi_error_count = 3;    /* SPI 错误计数 */
+  uint32 mcu_temp        = 4;    /* MCU 内部温度 */
+}

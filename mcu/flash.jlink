@@ -1,0 +1,6 @@
+r
+h
+loadfile build/mcu_demo.hex
+r
+g
+q

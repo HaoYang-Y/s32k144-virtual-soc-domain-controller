@@ -4,10 +4,10 @@
 > **学习方式**：按顺序读完各篇后对照本文理解 CAN 概念和 SDK 使用模式
 > **核心原则**：只讲"为什么"和"怎么做"，全程用表格 + 伪代码 + 大白话
 
-> **⚠️ 当前项目现状**: 本工程 MCAL 层已改为直接寄存器操作（AUTOSAR CP 命名规范），
-> CAN 驱动将在 `mcu/mcal/CanDrv.c` 中以 `Can_Init()`、`Can_Transmit()` 等接口实现。
-> 本文中 SDK DRV API 内容（`FLEXCAN_DRV_*`）作为概念理解参考，
-> 帮助理解 FlexCAN 模块和 SDK 封装模式。理解后即可自行用寄存器实现 MCAL 层 API。
+> **⚠️ 当前项目现状 (2026-06-19)**: MCU 端按 AUTOSAR CP 分层组织。
+> CAN 驱动位于 `mcu/MCAL/Can/src/Can.c`，以 `Can_Init()`、`Can_Transmit()` 等接口封装 NXP SDK 的 `FLEXCAN_DRV_*` API。
+> 上层 `mcu/EcuAbstraction/CanIf/src/CanIf.c` 提供 `CanIf_Transmit()` 抽象接口。
+> **CAN 功能尚未调通**，本文档中的 SDK API 示例即为实现 MCAL Can 模块的直接参考。
 
 ---
 
@@ -708,9 +708,9 @@ void can_irq_demo(void)
 
 **全文结束**
 
-读完本文后，打开 `mcu/src/flexcan.c` 和 `mcu/include/flexcan.h`，
-对照第 4~6 篇的 SDK API 示例，理解 `flexcan_init()`、`flexcan_send_msg()`、
-`flexcan_recv_msg()` 三个函数如何封装 SDK API。
+读完本文后，打开 `mcu/MCAL/Can/src/Can.c` 和 `mcu/MCAL/Can/include/Can.h`，
+对照第 4~6 篇的 SDK API 示例，理解 `Can_Init()`、`Can_Transmit()`、
+`Can_Receive()` 三个函数如何封装 `FLEXCAN_DRV_*` SDK API。
 
-工程代码使用 SDK API 而非寄存器操作，SDK 头文件路径：
+工程代码使用 NXP SDK DRV API 开发，SDK 头文件路径：
 `mcu/S32_SDK_S32K1xx_RTM_4.0.2/platform/drivers/inc/flexcan_driver.h`

@@ -2,14 +2,30 @@
 
 > **目标人群**: 有 Linux C++ 基础，嵌入式 C 经验较少
 > **预计时长**: 8~12 周（每周 5~8 小时）
-> **核心产出**: GPIO/ADC 信号采集 → MCU CP 三层处理 → SPI 差分帧 → SOC AP 三层处理 → SOME/IP + CAN 发布
-> **原则**: 先独立学 MCAL 外设驱动，再组合实现完整网关
+> **核心产出**: GPIO/ADC 信号采集 → MCU CP 四层处理 → SPI 差分帧 → SOC AP 三层处理 → SOME/IP + CAN 发布
+> **原则**: 自底向上，先独立学 MCAL 外设驱动，再逐层上推至 SWC 和 SOC 服务
+> 
+> **当前状态 (2026-06-19)**: MCU 端各层骨架代码已搭好，CAN 和 UART 尚未调通。
 
 ---
 
-## 🧩 SDK 说明
+## 🧩 开发方式说明
 
-本工程 MCU 代码基于 **NXP S32 SDK for S32K1xx (RTM 4.0.2)**。当前 MCAL 层用**直接寄存器操作**（学习目的），后续 Com Stack / SWC 层逐步引入 SDK DRV API。
+本工程 MCU 代码使用 **NXP S32 SDK for S32K1xx (RTM 4.0.2)** 的 DRV 层 API 开发，
+遵循 AUTOSAR CP 命名规范（`Xxx_Init`、`Xxx_Read`、`Xxx_Write`）。MCAL 层各模块封装 SDK API，
+上层通过 AUTOSAR 标准接口调用。
+
+### MCU 分层架构速览
+
+```
+App/Swc_SignalGateway/    ← ⑤ SWC 应用层（周期调度，不碰硬件）
+RTE/                       ← ④ 运行时环境（volatile 共享内存，零开销宏）
+EcuAbstraction/            ← ③ ECU 抽象层（CanIf, IoHwAb, SpiIf）
+CDD/Uart/                  ← ② 复杂驱动（UART 日志）
+MCAL/                      ← ① 微控制器抽象层（Gpio, Mcu, Adc, Can, Spi, Port）
+  每模块: include/ src/ config/
+NXP S32 SDK                ← 底层（芯片头文件 + 启动代码 + 链接脚本）
+```
 
 ### SDK 头文件路径速查
 
@@ -36,7 +52,8 @@ PC (宿主机)
 └── S32K144 开发板（MCU）
     ├── LPSPI0 ──── SPI Master → FT2232H
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
-    ├── GPIO 按键 ×9（车门×4 / 档位×4 / 喇叭）
+    ├── LPUART1 ── UART → 宿主机串口（调试日志）
+    ├── GPIO 按键 ×5（车门×4 / 档位 P/R/N/D）
     └── ADC 旋钮 ×2（方向盘角度 / 车速）
 ```
 
@@ -48,30 +65,33 @@ PC (宿主机)
 ## 学习路线总览
 
 ```
-阶段 0：环境搭建与硬件拓扑                     ← 让 SPI/CAN 物理连通
+阶段 0：环境搭建与硬件确认                     ← 让 SPI/CAN/UART 物理连通
         ↓
-阶段 1：MCU MCAL 层搭建（GPIO→ADC→PWM→Mcu）  ← 直接寄存器操作
-        ↓
-阶段 2：MCU 信号采集验证（按键中断 + ADC 采样）
-        ↓
-阶段 3：CAN 通信精进（FlexCAN + DBC 编解码）
-        ↓
-阶段 4：SPI 通信（32B 固定帧 + 差分 + CRC8）
-        ↓
-阶段 5：SOME/IP 服务通信（vsomeip + SD）
-        ↓
-阶段 6：UDS 诊断（后续扩展）
+阶段 1：MCAL 外设驱动（Gpio→Mcu→Adc→Can→Spi→Port）
+        ↓         每模块独立学习，SDK API 开发
+阶段 2：ECU 抽象层（CanIf→IoHwAb→SpiIf）+ CDD/Uart
+        ↓         把 MCAL 接口抽象为硬件无关的 BSW 接口
+阶段 3：RTE + SWC 信号采集（共享缓冲区 + 周期调度）
+        ↓         零开销宏连接 SWC 和底层
+阶段 4：CAN 通信（FlexCAN 收发 + CAN 分析仪验证）
+        ↓         附 CP Can/CanIf/PduR/Com 概念
+阶段 5：SPI 通信（32B 固定帧 + 差分 + CRC8）
+        ↓         附 CP Spi/Com Stack 概念
+阶段 6：SOME/IP 服务通信（vsomeip + SD）
+        ↓         附 AP ara::com/ara::sd 概念
+阶段 7：UDS 诊断（后续扩展）
 ```
 
 ---
 
-## 阶段 0：环境搭建与硬件拓扑（1 天）
+## 阶段 0：环境搭建与硬件确认（1 天）
 
 ### 硬件确认
 
 - 确认 S32K144 开发板供电正常
 - 确认 FT2232H USB-SPI 桥被 Ubuntu 虚拟机识别（USB 直通）
 - 确认 USB-CAN 工具被 Ubuntu 虚拟机识别
+- 确认 USB-UART 串口被宿主机识别（用于 MCU 调试日志）
 - CAN 总线两端接 **120Ω 终端电阻**
 
 ### 虚拟机侧驱动加载
@@ -91,34 +111,43 @@ candump can0
 ### 开发环境确认
 
 ```bash
+# MCU 交叉编译
 sudo apt install gcc-arm-none-eabi make
 arm-none-eabi-gcc --version
+
+# SOC 构建
+sudo apt install cmake g++
+cmake --version
 ```
 
 ---
 
-## 阶段 1：MCU MCAL 层搭建（2~3 周）
+## 阶段 1：MCAL 外设驱动（2~3 周）
 
-> **目标**: 按 AUTOSAR CP MCAL 规范实现外设驱动，全部直接操作寄存器。
+> **目标**: 按 AUTOSAR CP MCAL 规范实现外设驱动，使用 NXP SDK DRV 层 API。
 
 ### 子任务
 
-| 模块 | 文件 | 核心 API |
+| 模块 | 目录 | 核心 API |
 |------|------|---------|
-| McuDrv | `mcu/mcal/McuDrv.h/c` | `Mcu_InitClock()`、`Mcu_GetCoreFreq()` |
-| GpioDrv | `mcu/mcal/GpioDrv.h/c` | `GpioDrv_Init()`、`Gpio_ReadPin()`、`Gpio_WritePin()` |
-| AdcDrv | `mcu/mcal/AdcDrv.h/c` | `AdcDrv_Init()`、`Adc_ReadGroup()` |
-| PwmDrv | `mcu/mcal/PwmDrv.h/c` | `PwmDrv_Init()`（PIT 定时器封装） |
+| Mcu | `mcu/MCAL/Mcu/` | `Mcu_InitClock()`、`Mcu_GetCoreFreq()` |
+| Port | `mcu/MCAL/Port/` | `Port_SetPinMode()`、`Port_SetMuxMode()` |
+| Gpio | `mcu/MCAL/Gpio/` | `Gpio_Init()`、`Gpio_ReadPin()`、`Gpio_WritePin()` |
+| Adc | `mcu/MCAL/Adc/` | `Adc_Init()`、`Adc_ReadGroup()` |
+| Can | `mcu/MCAL/Can/` | `Can_Init()`、`Can_Transmit()`、`Can_Receive()` |
+| Spi | `mcu/MCAL/Spi/` | `Spi_Init()`、`Spi_WriteIb()`、`Spi_ReadIb()` |
+
+> 每个模块都遵循 `include/`（接口头文件）+ `src/`（实现）+ `config/`（配置参数）三目录结构。
 
 ### C 语言嵌入式必备知识点
 
 | 知识点 | 为什么重要 | 本项目应用 |
 |--------|-----------|-----------|
-| **typedef / 结构体** | 封装配置参数 | `GpioDrv_ConfigType` |
-| **枚举与宏定义** | 定义模式/状态 | `GPIO_LEVEL_LOW`、`ADC_CH_VEHICLE_SPEED` |
-| **volatile 关键字** | 防止编译器优化寄存器读取 | MCAL 寄存器映射 |
+| **typedef / 结构体** | 封装配置参数 | `Gpio_ConfigType`、`Can_ConfigType` |
+| **枚举与宏定义** | 定义模式/状态 | `GPIO_LEVEL_LOW`、`CAN_BAUDRATE_500K` |
+| **volatile 关键字** | 防止编译器优化 | 共享缓冲区、SDK 状态结构体 |
 | **函数指针** | 中断回调（阶段 2 用） | ISR 注册 |
-| **链接脚本** (.ld) | 内存布局 | `s32k144_flash.ld` |
+| **链接脚本** (.ld) | 内存布局 | SDK 官方 `S32K144_64_flash.ld` |
 
 ### 阶段 1 验证
 
@@ -127,29 +156,45 @@ cd mcu && make
 # 预期：源文件编译成功，生成 mcu_demo.elf
 ```
 
-✅ **完成标准**: `mcu/mcal/` 下四个驱动模块编译通过，Makefile 适配新目录结构。
-
-**🔄 AUTOSAR CP 概念穿插**: MCAL 层是 AUTOSAR CP 的最底层，所有外设驱动通过标准接口（`Xxx_Init`、`Xxx_Read/Write`）向上层暴露。
+**🔄 AUTOSAR CP 概念穿插**: MCAL 层是 AUTOSAR CP 的最底层，所有外设驱动通过标准接口（`Xxx_Init`、`Xxx_Read`/`Xxx_Write`）向上层暴露。这一层的规范保证了上层代码不依赖具体芯片。
 
 ---
 
-## 阶段 2：MCU 信号采集验证（2~3 周）
+## 阶段 2：ECU 抽象层 + CDD（1~2 周）
 
-> **目标**: GPIO 按键中断 + ADC 定时采样，数据存入共享缓冲区，主循环轮询打印。
+> **目标**: 在 MCAL 之上构建硬件无关的抽象接口。
 
 ### 子任务
 
-- [ ] GPIO 中断配置（按键事件驱动，9 个按键）
-- [ ] ADC 通道配置 + PIT 50ms/100ms 定时采样
-- [ ] `g_shared_signals` 共享缓冲区（`volatile struct`）
-- [ ] 按键状态变化 → 打印
-- [ ] ADC 采样值 → 打印
-- [ ] 烧录到 S32K144 验证
+| 模块 | 目录 | 核心 API |
+|------|------|---------|
+| CanIf | `mcu/EcuAbstraction/CanIf/` | `CanIf_Transmit()` 封装 `Can_Transmit()` |
+| IoHwAb | `mcu/EcuAbstraction/IoHwAb/` | `IoHwAb_ReadPin()` 封装 `Gpio_ReadPin()` |
+| SpiIf | `mcu/EcuAbstraction/SpiIf/` | `SpiIf_WriteIb()` 封装 `Spi_WriteIb()` |
+| Uart | `mcu/CDD/Uart/` | `Uart_Init()`、`Uart_SendString()` (LPUART SDK API) |
+
+> 这层的目的是解耦：上层 SWC 不知道底层是哪个 CAN 控制器、哪个 SPI 外设。
+
+### 阶段 2 验证
+
+```bash
+cd mcu && make
+# 预期：各抽象层模块编译通过，能调用对应 MCAL 接口
+```
+
+**🔄 AUTOSAR CP 概念穿插**: ECU Abstraction Layer 让上层软件组件（SWC）不依赖具体 ECU 硬件。
+CanIf 屏蔽了 CAN 控制器的差异，IoHwAb 屏蔽了 GPIO/ADC 的引脚差异。
+
+---
+
+## 阶段 3：RTE + SWC 信号采集（1~2 周）
+
+> **目标**: 构建运行时环境和 SWC 调度框架。
 
 ### 共享缓冲区（RTE 模拟）
 
 ```c
-/* com_stub.h — 零开销共享内存 */
+/* Rte_Type.h — 共享信号类型定义 */
 typedef struct {
     uint8_t  door_status;      /* 车门×4 */
     uint8_t  gear_position;    /* 档位 P/R/N/D */
@@ -160,27 +205,41 @@ typedef struct {
     uint16_t vehicle_speed;    /* 车速 */
 } SharedSignalsType;
 
+/* Rte.h — 零开销 RTE 宏 */
+#define Rte_Read(sig)   g_shared_signals.sig
+#define Rte_Write(sig, val)  g_shared_signals.sig = (val)
+
+/* Rte.c — 全局共享缓冲区实例 */
 volatile SharedSignalsType g_shared_signals;
 ```
 
-### 阶段 2 验证
+### 子任务
+
+- [ ] `mcu/RTE/Rte_Type.h` — 共享信号类型定义
+- [ ] `mcu/RTE/Rte.h` — Rte_Read/Rte_Write 宏
+- [ ] `mcu/RTE/Rte.c` — volatile 共享缓冲区实例
+- [ ] `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` — SWC 周期调度
+- [ ] GPIO 中断 → ISR Rte_Write（写共享缓冲区）
+- [ ] ADC PIT 定时 → ISR Rte_Write
+- [ ] SWC_Run → Rte_Read → 差分编码 → CanIf/SpiIf 发送
+
+### 阶段 3 验证
 
 ```
 MCU 端 (S32K144)
-  按键按下 → GPIO 中断 → 更新 g_shared_signals
-  ADC 旋钮 → PIT 50ms 定时 → 更新 g_shared_signals
-  main 循环 100ms → 读取 g_shared_signals → puts() 打印
+  按键按下 → GPIO ISR → Rte_Write → 更新 g_shared_signals
+  ADC 旋钮 → PIT ISR → Rte_Write → 更新 g_shared_signals
+  Swc_SignalGateway_Run → Rte_Read → Uart 打印
 ```
 
-✅ **完成标准**: 按键 + 旋钮的物理信号能被正确采集并打印。
-
-**🔄 AUTOSAR CP 概念穿插**: RTE（运行时环境）在 AUTOSAR CP 中负责 SWC 之间的通信。本工程用 `volatile` 共享内存模拟 RTE —— ISR 写、主循环读，零开销。
+**🔄 AUTOSAR CP 概念穿插**: RTE（运行时环境）是 AUTOSAR CP 中 SWC 之间的通信中枢。
+本工程用 `volatile` 共享内存 + 宏模拟 —— ISR 写、SWC 读，零开销。
 
 ---
 
-## 阶段 3：CAN 通信（2~3 周）
+## 阶段 4：CAN 通信（2~3 周）
 
-> **目标**: FlexCAN 收发 CAN 帧，DBC 信号编解码。
+> **目标**: FlexCAN 收发 CAN 帧，USB-CAN 分析仪捕获验证。
 
 ### CAN 信号矩阵
 
@@ -199,7 +258,7 @@ MCU 端 (S32K144)
 ```
 S32K144 FlexCAN0                  Ubuntu 虚拟机
   按键 → 编码 CAN 帧 → 发送 →  candump can0 捕获
-  candump 发送 →       接收 →  串口打印
+  candump 发送 →       接收 →  UART 打印
 ```
 
 ✅ **完成标准**: S32K144 能发送/接收 CAN 帧；USB-CAN 工具 `candump` 双向验证通过。
@@ -208,7 +267,7 @@ S32K144 FlexCAN0                  Ubuntu 虚拟机
 
 ---
 
-## 阶段 4：SPI 通信（2~3 周）
+## 阶段 5：SPI 通信（2~3 周）
 
 > **目标**: MCU Master → FT2232H Slave，32B 固定帧，差分协议，CRC8 校验。
 
@@ -236,22 +295,22 @@ CMD(1B) | SIZE(1B) | PAYLOAD(28B) | CRC8(1B)
 S32K144 (Master)                 Ubuntu (Slave)
   SPI 发 32B 帧 →  FT2232H  →  libmpsse 读取
                                    │
-                               DiffCodec 解码
+                               SpiGateway 解码
                                    │
-                               SignalBuffer 缓存
+                               全量状态缓存
 ```
 
 ✅ **完成标准**: MCU 端 SPI 发送稳定（1MHz），SOC 端能正确解码差分帧，全量状态缓存一致。
 
-**🔄 AUTOSAR CP 概念穿插**: Com Stack 负责信号↔Pdu 编解码，SpI 驱动提供 `Spi_WriteIb()` 接口。
+**🔄 AUTOSAR CP 概念穿插**: Com Stack 负责信号↔Pdu 编解码，Spi 驱动提供 `Spi_WriteIb()` 接口。
 
 ---
 
-## 阶段 5：SOME/IP 服务通信（3~4 周）
+## 阶段 6：SOME/IP 服务通信（3~4 周）
 
 > **目标**: SOC 端 vsomeip 服务发布 + 端到端验证。
 
-### SOME/IP Event 定义
+### SOM/IP Event 定义
 
 | Event ID | 信号 | 类型 | Event ID | 信号 | 类型 |
 |----------|------|------|----------|------|------|
@@ -263,10 +322,7 @@ S32K144 (Master)                 Ubuntu (Slave)
 ### 端到端数据流
 
 ```
-按键→MCAL→RTE→SWC→ComStack→SPI→Platform→Service→Communication
-                                           Differential Codec
-                                              SignalBuffer
-                                                 vsomeip
+按键→MCAL ISR→RTE→SWC→SpiIf/CanIf→SPI→Platform→SpiGateway→SignalFusion→SOME/IP
 ```
 
 ✅ **完成标准**: 按键→SPI→vsomeip Event 订阅成功，端到端延迟 ≤ 50ms。
@@ -275,12 +331,12 @@ S32K144 (Master)                 Ubuntu (Slave)
 
 ---
 
-## 阶段 6：UDS 诊断（后续）
+## 阶段 7：UDS 诊断（后续）
 
 | 关键服务 | 预留位置 |
 |---------|---------|
-| 0x10 会话控制 | `soc/src/uds_server/` |
-| 0x22 读 DID | `config/domain_config.yaml` |
+| 0x10 会话控制 | `soc/diag/ara/diag/` |
+| 0x22 读 DID | `soc/config/domain_config.yaml` |
 | 0x19 读取 DTC | （待实现） |
 
 ---
@@ -289,13 +345,14 @@ S32K144 (Master)                 Ubuntu (Slave)
 
 | 阶段 | 内容 | 时间 | 产出 |
 |------|------|------|------|
-| 0 | 环境搭建 + 硬件拓扑 | 1 天 | SPI/CAN 物理连通 |
-| 1 | MCU MCAL 层搭建 | 2~3 周 | GpioDrv / McuDrv / AdcDrv / PwmDrv |
-| 2 | MCU 信号采集 | 2~3 周 | 按键中断 + ADC 采样 + 共享缓冲区 |
-| 3 | CAN 通信 | 2~3 周 | FlexCAN 收发 + DBC 编解码 |
-| 4 | SPI 通信 | 2~3 周 | 32B 固定帧 + 差分 + CRC8 |
-| 5 | SOME/IP 服务通信 | 3~4 周 | vsomeip 服务发布 + SD |
-| 6 | UDS 诊断 | 后续 | 诊断协议栈 |
+| 0 | 环境搭建 + 硬件确认 | 1 天 | SPI/CAN/UART 物理连通 |
+| 1 | MCAL 外设驱动 | 2~3 周 | Gpio / Mcu / Adc / Can / Spi / Port |
+| 2 | ECU 抽象层 + CDD | 1~2 周 | CanIf / IoHwAb / SpiIf / Uart |
+| 3 | RTE + SWC | 1~2 周 | 共享缓冲区 + 周期调度 |
+| 4 | CAN 通信 | 2~3 周 | FlexCAN 收发 + CAN 分析仪验证 |
+| 5 | SPI 通信 | 2~3 周 | 32B 固定帧 + 差分 + CRC8 |
+| 6 | SOME/IP 服务通信 | 3~4 周 | vsomeip 服务发布 + SD |
+| 7 | UDS 诊断 | 后续 | 诊断协议栈 |
 
 ---
 

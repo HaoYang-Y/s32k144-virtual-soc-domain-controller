@@ -3,6 +3,7 @@
 # ========================================
 
 # ---- 构建产物 ----
+mcu/build/
 soc/build/
 *.o
 *.elf
@@ -25,6 +26,12 @@ obj_ram/
 
 # ---- PDF 文件 ----
 *.pdf
+
+# ---- 日志文件（运行时生成） ----
+tools/uart_logger/log/
+
+# ---- 工具编译产物 ----
+tools/uart_logger/uart_logger
 
 # ---- 其他 ----
 .DS_Store
