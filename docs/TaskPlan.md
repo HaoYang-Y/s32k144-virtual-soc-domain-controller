@@ -14,7 +14,6 @@
 |----|------|------|------|
 | **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ⏳ 骨架已有（SDK API） |
 | **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ⏳ 骨架已有（clock_config + Mcu） |
-| **MCAL** | Adc | `mcu/MCAL/Adc/` | ⏳ 骨架已有 |
 | **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 已调通 (500kbps, 双向通信) |
 | **MCAL** | Spi | `mcu/MCAL/Spi/` | ⏳ 骨架已有 |
 | **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有（pin_mux + Port） |
@@ -103,20 +102,13 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 - [ ] IoHwAb_ReadPin 抽象封装
 - [ ] 按键中断 ISR → 更新共享缓冲区
 
-### 任务 4: ADC 旋钮采样
-**涉及**: `mcu/MCAL/Adc/`
-- [ ] Adc_Init 通道配置
-- [ ] PIT 定时器触发采样 (50ms/100ms)
-- [ ] Adc_ReadGroup 读取采样值
-- [ ] ISR → 更新共享缓冲区
-
-### 任务 5: MCU 时钟配置
+### 任务 4: MCU 时钟配置
 **涉及**: `mcu/MCAL/Mcu/`
 - [ ] Mcu_InitClock 完整实现
 - [ ] clock_config.c (SPLL 40MHz → 各外设时钟)
 - [ ] Mcu_GetCoreFreq 实现
 
-### 任务 6: SPI 驱动
+### 任务 5: SPI 驱动
 **涉及**: `mcu/MCAL/Spi/`
 - [ ] Spi_Init (LPSPI0, Master, 1MHz)
 - [ ] Spi_WriteIb / Spi_ReadIb 实现
@@ -126,16 +118,16 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ## P2: ECU 抽象层 + RTE
 
-### 任务 7: CanIf 接口
+### 任务 6: CanIf 接口
 **涉及**: `mcu/EcuAbstraction/CanIf/`
 - [ ] CanIf_Transmit → 调用 Can_Transmit
 - [ ] CanIf_RxIndication 回调机制
 
-### 任务 8: SpiIf 接口
+### 任务 7: SpiIf 接口
 **涉及**: `mcu/EcuAbstraction/SpiIf/`
 - [ ] SpiIf_WriteIb → 调用 Spi_WriteIb
 
-### 任务 9: RTE 运行时环境
+### 任务 8: RTE 运行时环境
 **涉及**: `mcu/RTE/`
 - [ ] Rte_Read / Rte_Write 宏
 - [ ] g_shared_signals volatile 共享缓冲区
@@ -144,14 +136,14 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ## P3: SWC + 全链路
 
-### 任务 10: SWC 信号采集调度
+### 任务 9: SWC 信号采集调度
 **涉及**: `mcu/App/Swc_SignalGateway/`
 - [ ] Swc_SignalGateway_Run 周期调度
 - [ ] 通过 RTE 读写信号
 - [ ] 差分编码 + SPI 发送
 - [ ] CAN 帧编码 + 发送
 
-### 任务 11: MCU↔SOC SPI 通信联调
+### 任务 10: MCU↔SOC SPI 通信联调
 **涉及**: `mcu/MCAL/Spi/` + `soc/platform/Spi/` + `soc/communication/SpiGateway/`
 - [ ] SOC 端 libmpsse 初始化 SPI Slave
 - [ ] SpiGateway 差分帧解码
@@ -161,18 +153,18 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ## P4: SOC 端服务
 
-### 任务 12: SignalFusion 信号融合
+### 任务 11: SignalFusion 信号融合
 **涉及**: `soc/apps/DomainController/`
 - [ ] ConfigManager 读取 domain_config.yaml
 - [ ] SignalFusion 信号处理 + 状态管理
 
-### 任务 13: SOME/IP 服务
+### 任务 12: SOME/IP 服务
 **涉及**: `soc/communication/ara/com/`
 - [ ] vsomeip 环境搭建
 - [ ] Event 发布 (0x8001~0x8007)
 - [ ] Service Discovery
 
-### 任务 14: UDS 诊断
+### 任务 13: UDS 诊断
 **涉及**: `soc/diag/ara/diag/`
 - [ ] UdsServer 骨架实现
 - [ ] 0x10 会话控制 / 0x22 读 DID / 0x19 DTC
@@ -181,13 +173,13 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ## P5: 远期
 
-### 任务 15: Protobuf 代码生成
+### 任务 14: Protobuf 代码生成
 **涉及**: `proto/signal_gateway.proto`
 - [ ] MCU: nanopb 生成 C 代码 → `mcu/proto/`
 - [ ] SOC: protoc 生成 C++ 代码 → `soc/proto/`
 - [ ] 集成到构建系统
 
-### 任务 16: DBC 信号矩阵
+### 任务 15: DBC 信号矩阵
 - [ ] 编写 `tools/dbc/vehicle_signals.dbc`
 - [ ] CAN 发送/接收自动按 DBC 编解码
 

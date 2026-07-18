@@ -16,7 +16,7 @@
 │  ③ EcuAbstraction/           ECU 抽象层 (CanIf, IoHwAb, SpiIf) │
 │  ② CDD/Uart/                 复杂驱动                          │
 │  ① MCAL/                     微控制器抽象层                    │
-│     Gpio/ Mcu/ Adc/ Can/ Spi/ Port/                           │
+│     Gpio/ Mcu/ Can/ Spi/ Port/                           │
 ├──────────────────────────────────────────────────────────────┤
 │                    SOC 端 (AUTOSAR AP)                        │
 │                                                               │
@@ -75,7 +75,6 @@
 | 模块 | AUTOSAR CP 对应 | 核心 API |
 |------|----------------|---------|
 | `mcu/MCAL/Gpio/` | **Gpio** | `Gpio_ReadPin()`, `Gpio_WritePin()` |
-| `mcu/MCAL/Adc/` | **Adc** | `Adc_ReadGroup()` |
 | `mcu/MCAL/Mcu/` | **Mcu** | `Mcu_InitClock()`, `Mcu_GetCoreFreq()` |
 | `mcu/MCAL/Port/` | **Port** | `Port_SetPinMode()`, `Port_SetMuxMode()` |
 | `mcu/EcuAbstraction/IoHwAb/` | **IoHwAb** | `IoHwAb_ReadPin()` |

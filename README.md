@@ -12,7 +12,7 @@
 
 > **车载信号网关原型 — S32K144 MCU 采集物理信号 → SPI → Ubuntu SOC → SOME/IP + CAN 发布**
 >
-> S32K144 开发板采集 GPIO 按键 + ADC 旋钮，通过 SPI 传输给 Ubuntu 虚拟机，
+> S32K144 开发板采集 GPIO 按键，通过 SPI/CAN/UART 与 Ubuntu 虚拟机通信，
 > SOC 端差分解码后通过 SOME/IP 服务和 CAN 帧发布到其他域控制器。
 > 代码按 AUTOSAR CP 四层（MCAL/ECU Abstraction/RTE/SWC）和 AP 三层（Platform/Service/Communication）组织，
 > 模拟真实车载域控制器架构。
@@ -50,40 +50,39 @@
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
 | 3 | **GPIO 按键输入** | MCAL/Gpio, MCAL/Port | `mcu/MCAL/Gpio/src/Gpio.c`, `mcu/MCAL/Port/src/Port.c` | ⏳ 骨架已有 |
-| 4 | **ADC 旋钮采样** | MCAL/Adc | `mcu/MCAL/Adc/src/Adc.c` | ⏳ 骨架已有 |
-| 5 | **MCU 时钟配置** | MCAL/Mcu | `mcu/MCAL/Mcu/src/Mcu.c`, `mcu/MCAL/Mcu/src/clock_config.c` | ⏳ 骨架已有 |
-| 6 | **SPI 驱动** | MCAL/Spi | `mcu/MCAL/Spi/src/Spi.c` | ⏳ 骨架已有 |
-| 7 | **IoHwAb 硬件抽象** | EcuAbstraction/IoHwAb | `mcu/EcuAbstraction/IoHwAb/src/IoHwAb.c` | ⏳ 骨架已有 |
+| 4 | **MCU 时钟配置** | MCAL/Mcu | `mcu/MCAL/Mcu/src/Mcu.c`, `mcu/MCAL/Mcu/src/clock_config.c` | ⏳ 骨架已有 |
+| 5 | **SPI 驱动** | MCAL/Spi | `mcu/MCAL/Spi/src/Spi.c` | ⏳ 骨架已有 |
+| 6 | **IoHwAb 硬件抽象** | EcuAbstraction/IoHwAb | `mcu/EcuAbstraction/IoHwAb/src/IoHwAb.c` | ⏳ 骨架已有 |
 
 ### P2 — ECU 抽象层 + RTE（骨架已有，依赖 P1）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 8 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ⏳ 骨架已有 |
-| 9 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
-| 10 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
+| 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ⏳ 骨架已有 |
+| 8 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
+| 9 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
 
 ### P3 — SWC 信号采集 + 全链路（依赖 P2）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 11 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` | ⏳ 骨架已有 |
-| 12 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
+| 10 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` | ⏳ 骨架已有 |
+| 11 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
 
 ### P4 — SOC 端服务（依赖 P3）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 13 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
-| 14 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
-| 15 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
+| 12 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
+| 13 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
+| 14 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
 
 ### P5 — 远期规划
 
 | # | 任务 | 涉及模块 | 状态 |
 |---|------|---------|------|
-| 16 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
-| 17 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
+| 15 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
+| 16 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
 
 ---
 
@@ -100,17 +99,13 @@ PC (宿主机)
 └── S32K144 开发板（MCU）
     ├── LPSPI0 ──── SPI Master → FT2232H
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
-    ├── GPIO 按键 ×5（车门×4 / 档位 P/R/N/D）
-    └── ADC 旋钮 ×2（方向盘角度 / 车速）
+    └── GPIO 按键（车门×4 / 档位 P/R/N/D）
 ```
 
 ### 数据流
 
 ```
-  GPIO 按键 ──中断──┐
-  ADC 旋钮 ──PIT定时─┤
-                     ▼
-              MCU 共享缓冲区（volatile struct）
+  GPIO 按键 ──中断──→ MCU 共享缓冲区（volatile struct）
                      │
               SWC 周期调度
                      │
@@ -151,8 +146,7 @@ PC (宿主机)
   │ CDD/Uart/                        │       └──────────────────────────────────┘
   ├──────────────────────────────────┤
   │ MCAL/ (NXP SDK API)              │
-  │   Gpio / Mcu / Adc / Can /       │
-  │   Spi / Port                     │
+│   Gpio / Mcu / Can / Spi / Port  │
   └──────────────────────────────────┘
 ```
 
@@ -165,7 +159,7 @@ PC (宿主机)
 ### 推荐学习顺序
 
 ```
-第一阶段：MCAL 外设驱动（Gpio→Mcu→Adc→Can→Spi→Port）
+第一阶段：MCAL 外设驱动（Gpio→Mcu→Can→Spi→Port）
          ↓        附 AUTOSAR CP MCAL 概念（标准化接口 Xxx_Init / Xxx_Read / Xxx_Write）
 第二阶段：ECU 抽象层（CanIf→IoHwAb→SpiIf）
          ↓        把 MCAL 的硬件操作抽象为业务层可用的接口
@@ -208,7 +202,6 @@ s32k144-virtual-soc-domain-controller/
 │   ├── MCAL/                    ← ① 微控制器抽象层（操作硬件寄存器）
 │   │   ├── Gpio/    include/ src/ config/   GPIO 引脚读写
 │   │   ├── Mcu/     include/ src/ config/   时钟配置
-│   │   ├── Adc/     include/ src/ config/   ADC 采样
 │   │   ├── Can/     include/ src/ config/   FlexCAN 收发
 │   │   ├── Spi/     include/ src/ config/   LPSPI 收发
 │   │   └── Port/    include/ src/ config/   引脚复用配置
@@ -378,7 +371,7 @@ cmake .. && make -j$(nproc)
 | J-Link / OpenSDA 调试器 | 烧录和调试 | ✅ 是 |
 | FT2232H USB-SPI 桥 | MCU↔SOC SPI 通信 | ✅ 是 |
 | USB↔CAN 工具 | CAN 通信验证 | ✅ 是 |
-| 按键/旋钮模块 | 模拟物理信号源 | ✅ 是 |
+| 按键模块 | 模拟 GPIO 信号源 | ✅ 是 |
 
 ---
 
@@ -390,6 +383,6 @@ cmake .. && make -j$(nproc)
 
 > **一句话总结**
 >
-> GPIO/ADC 物理信号 → MCU CP 四层处理（MCAL→ECU Abstraction→RTE→SWC）→ SPI / CAN 输出
+> GPIO 物理信号 → MCU CP 四层处理（MCAL→ECU Abstraction→RTE→SWC）→ SPI / CAN / UART 输出
 > → SOC AP 三层处理（Platform→Communication→App）→ SOME/IP + CAN 发布。
 > 从寄存器到服务，逐层递进，模拟真实车载域控制器链路。

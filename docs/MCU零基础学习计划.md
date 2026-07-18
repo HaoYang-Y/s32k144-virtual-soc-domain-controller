@@ -2,7 +2,7 @@
 
 > **目标人群**: 有 Linux C++ 基础，嵌入式 C 经验较少
 > **预计时长**: 8~12 周（每周 5~8 小时）
-> **核心产出**: GPIO/ADC 信号采集 → MCU CP 四层处理 → SPI 差分帧 → SOC AP 三层处理 → SOME/IP + CAN 发布
+> **核心产出**: CAN/SPI/UART 通信 → MCU CP 四层处理 → SOC AP 三层处理 → SOME/IP + CAN 发布
 > **原则**: 自底向上，先独立学 MCAL 外设驱动，再逐层上推至 SWC 和 SOC 服务
 > 
 > **当前状态 (2026-06-19)**: MCU 端各层骨架代码已搭好，CAN 和 UART 尚未调通。
@@ -20,9 +20,9 @@
 ```
 App/Swc_SignalGateway/    ← ⑤ SWC 应用层（周期调度，不碰硬件）
 RTE/                       ← ④ 运行时环境（volatile 共享内存，零开销宏）
-EcuAbstraction/            ← ③ ECU 抽象层（CanIf, IoHwAb, SpiIf）
+MCAL/                      ← ① 微控制器抽象层（Gpio, Mcu, Can, Spi, Port）
 CDD/Uart/                  ← ② 复杂驱动（UART 日志）
-MCAL/                      ← ① 微控制器抽象层（Gpio, Mcu, Adc, Can, Spi, Port）
+EcuAbstraction/            ← ③ ECU 抽象层（CanIf, IoHwAb, SpiIf）
   每模块: include/ src/ config/
 NXP S32 SDK                ← 底层（芯片头文件 + 启动代码 + 链接脚本）
 ```
@@ -35,7 +35,6 @@ NXP S32 SDK                ← 底层（芯片头文件 + 启动代码 + 链接�
 | LPUART | `platform/drivers/inc/lpuart_driver.h` | `LPUART_DRV_*` |
 | Pins (GPIO) | `platform/drivers/inc/pins_driver.h` | `PINS_DRV_*` |
 | LPIT | `platform/drivers/inc/lpit_driver.h` | `LPIT_DRV_*` |
-| ADC | `platform/drivers/inc/adc_driver.h` | `ADC_DRV_*` |
 | LPSPI | `platform/drivers/inc/lpspi_driver.h` | `LPSPI_DRV_*` |
 | Clock | `platform/drivers/inc/clock_manager.h` | `CLOCK_SYS_*` |
 
@@ -53,8 +52,7 @@ PC (宿主机)
     ├── LPSPI0 ──── SPI Master → FT2232H
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
     ├── LPUART1 ── UART → 宿主机串口（调试日志）
-    ├── GPIO 按键 ×5（车门×4 / 档位 P/R/N/D）
-    └── ADC 旋钮 ×2（方向盘角度 / 车速）
+    └── GPIO 按键（车门×4 / 档位 P/R/N/D）
 ```
 
 > MCU 通过 SPI 将信号帧传输给 SOC，同时通过 CAN 发布到其他域控制器。
@@ -67,7 +65,7 @@ PC (宿主机)
 ```
 阶段 0：环境搭建与硬件确认                     ← 让 SPI/CAN/UART 物理连通
         ↓
-阶段 1：MCAL 外设驱动（Gpio→Mcu→Adc→Can→Spi→Port）
+阶段 1：MCAL 外设驱动（Gpio→Mcu→Can→Spi→Port）
         ↓         每模块独立学习，SDK API 开发
 阶段 2：ECU 抽象层（CanIf→IoHwAb→SpiIf）+ CDD/Uart
         ↓         把 MCAL 接口抽象为硬件无关的 BSW 接口
@@ -133,7 +131,6 @@ cmake --version
 | Mcu | `mcu/MCAL/Mcu/` | `Mcu_InitClock()`、`Mcu_GetCoreFreq()` |
 | Port | `mcu/MCAL/Port/` | `Port_SetPinMode()`、`Port_SetMuxMode()` |
 | Gpio | `mcu/MCAL/Gpio/` | `Gpio_Init()`、`Gpio_ReadPin()`、`Gpio_WritePin()` |
-| Adc | `mcu/MCAL/Adc/` | `Adc_Init()`、`Adc_ReadGroup()` |
 | Can | `mcu/MCAL/Can/` | `Can_Init()`、`Can_Transmit()`、`Can_Receive()` |
 | Spi | `mcu/MCAL/Spi/` | `Spi_Init()`、`Spi_WriteIb()`、`Spi_ReadIb()` |
 
@@ -183,7 +180,7 @@ cd mcu && make
 ```
 
 **🔄 AUTOSAR CP 概念穿插**: ECU Abstraction Layer 让上层软件组件（SWC）不依赖具体 ECU 硬件。
-CanIf 屏蔽了 CAN 控制器的差异，IoHwAb 屏蔽了 GPIO/ADC 的引脚差异。
+CanIf 屏蔽了 CAN 控制器的差异，IoHwAb 屏蔽了 GPIO 的引脚差异。
 
 ---
 
@@ -201,8 +198,6 @@ typedef struct {
     uint8_t  headlight;        /* 大灯 */
     uint8_t  turn_signal;      /* 转向灯 */
     uint8_t  horn;             /* 喇叭 */
-    int16_t  steering_angle;   /* 方向盘角度 */
-    uint16_t vehicle_speed;    /* 车速 */
 } SharedSignalsType;
 
 /* Rte.h — 零开销 RTE 宏 */
@@ -220,7 +215,6 @@ volatile SharedSignalsType g_shared_signals;
 - [ ] `mcu/RTE/Rte.c` — volatile 共享缓冲区实例
 - [ ] `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` — SWC 周期调度
 - [ ] GPIO 中断 → ISR Rte_Write（写共享缓冲区）
-- [ ] ADC PIT 定时 → ISR Rte_Write
 - [ ] SWC_Run → Rte_Read → 差分编码 → CanIf/SpiIf 发送
 
 ### 阶段 3 验证
@@ -228,7 +222,6 @@ volatile SharedSignalsType g_shared_signals;
 ```
 MCU 端 (S32K144)
   按键按下 → GPIO ISR → Rte_Write → 更新 g_shared_signals
-  ADC 旋钮 → PIT ISR → Rte_Write → 更新 g_shared_signals
   Swc_SignalGateway_Run → Rte_Read → Uart 打印
 ```
 
@@ -250,8 +243,6 @@ MCU 端 (S32K144)
 | 大灯 | 0x120 | 变化 | u8[0..1] | 0=关,1=近光,2=远光 |
 | 转向灯 | 0x121 | 变化 | u8[2..3] | 0=关,1=左,2=右 |
 | 喇叭 | 0x130 | 变化 | u8[0] | 0/1 |
-| 方向盘角度 | 0x200 | 50ms | i16 LSB | -450°~+450° |
-| 车速 | 0x201 | 100ms | u16 LSB | 0~300 km/h |
 
 ### 验证方法
 
@@ -315,14 +306,14 @@ S32K144 (Master)                 Ubuntu (Slave)
 | Event ID | 信号 | 类型 | Event ID | 信号 | 类型 |
 |----------|------|------|----------|------|------|
 | 0x8001 | 车门状态 | u8 | 0x8005 | 喇叭 | u8 |
-| 0x8002 | 档位 | u8 | 0x8006 | 方向盘角度 | i16 |
-| 0x8003 | 大灯 | u8 | 0x8007 | 车速 | u16 |
+| 0x8002 | 档位 | u8 | | | |
+| 0x8003 | 大灯 | u8 | | | |
 | 0x8004 | 转向灯 | u8 | | | |
 
 ### 端到端数据流
 
 ```
-按键→MCAL ISR→RTE→SWC→SpiIf/CanIf→SPI→Platform→SpiGateway→SignalFusion→SOME/IP
+按键→MCAL ISR→RTE→SWC→CanIf/SpiIf→SPI/CAN→Platform→SpiGateway→SignalFusion→SOME/IP
 ```
 
 ✅ **完成标准**: 按键→SPI→vsomeip Event 订阅成功，端到端延迟 ≤ 50ms。
@@ -346,7 +337,7 @@ S32K144 (Master)                 Ubuntu (Slave)
 | 阶段 | 内容 | 时间 | 产出 |
 |------|------|------|------|
 | 0 | 环境搭建 + 硬件确认 | 1 天 | SPI/CAN/UART 物理连通 |
-| 1 | MCAL 外设驱动 | 2~3 周 | Gpio / Mcu / Adc / Can / Spi / Port |
+| 1 | MCAL 外设驱动 | 2~3 周 | Gpio / Mcu / Can / Spi / Port |
 | 2 | ECU 抽象层 + CDD | 1~2 周 | CanIf / IoHwAb / SpiIf / Uart |
 | 3 | RTE + SWC | 1~2 周 | 共享缓冲区 + 周期调度 |
 | 4 | CAN 通信 | 2~3 周 | FlexCAN 收发 + CAN 分析仪验证 |

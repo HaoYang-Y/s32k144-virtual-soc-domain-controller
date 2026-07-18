@@ -75,7 +75,6 @@ Domain_Controller/
 │   ├── MCAL/                     # ★ MCAL 层（每模块 include/src/config 三目录）
 │   │   ├── Gpio/   (Gpio.h, Gpio.c, Gpio_Cfg.h)
 │   │   ├── Mcu/    (Mcu.h, Mcu.c, clock_config.h, clock_config.c, Mcu_Cfg.h)
-│   │   ├── Adc/    (Adc.h, Adc.c, Adc_Cfg.h)
 │   │   ├── Can/    (Can.h, Can.c, Can_Cfg.h)
 │   │   ├── Spi/    (Spi.h, Spi.c, Spi_Cfg.h)
 │   │   └── Port/   (Port.h, Port.c, pin_mux.h, pin_mux.c, Port_Cfg.h)
@@ -136,7 +135,6 @@ S32K144 的内存布局：
 |----|------|------|
 | MCAL | `MCAL/Gpio/src/Gpio.c` | GPIO 驱动（SDK PINS_DRV API） |
 | MCAL | `MCAL/Mcu/src/Mcu.c`, `MCAL/Mcu/src/clock_config.c` | 时钟配置 |
-| MCAL | `MCAL/Adc/src/Adc.c` | ADC 驱动 |
 | MCAL | `MCAL/Can/src/Can.c` | FlexCAN 驱动（SDK FLEXCAN_DRV API） |
 | MCAL | `MCAL/Spi/src/Spi.c` | SPI 驱动 |
 | MCAL | `MCAL/Port/src/Port.c`, `MCAL/Port/src/pin_mux.c` | 引脚复用 |
@@ -168,7 +166,6 @@ CFLAGS += -DCPU_S32K144HFT0VLLT -DSTART_FROM_FLASH -DDISABLE_WDOG
 CFLAGS += -I./include
 CFLAGS += -I./MCAL/Gpio/include
 CFLAGS += -I./MCAL/Mcu/include
-CFLAGS += -I./MCAL/Adc/include
 CFLAGS += -I./MCAL/Can/include
 CFLAGS += -I./MCAL/Spi/include
 CFLAGS += -I./MCAL/Port/include
@@ -295,7 +292,6 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 | MCAL | GPIO | `MCAL/Gpio/src/Gpio.c` | Gpio | ⏳ 骨架已有 |
 | MCAL | Clock | `MCAL/Mcu/src/Mcu.c`, `MCAL/Mcu/src/clock_config.c` | Mcu | ⏳ 骨架已有 |
 | MCAL | Port | `MCAL/Port/src/Port.c`, `MCAL/Port/src/pin_mux.c` | Port | ⏳ 骨架已有 |
-| MCAL | ADC | `MCAL/Adc/src/Adc.c` | Adc | ⏳ 骨架已有 |
 | MCAL | CAN | `MCAL/Can/src/Can.c` | Can | ⏳ 未调通 |
 | MCAL | SPI | `MCAL/Spi/src/Spi.c` | Spi | ⏳ 骨架已有 |
 | ECU Abstraction | CAN IF | `EcuAbstraction/CanIf/src/CanIf.c` | CanIf | ⏳ 骨架已有 |

@@ -36,8 +36,7 @@ PC (宿主机)
     ├── LPSPI0 ── SPI Master → FT2232H
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
     ├── LPUART1 ── UART → 宿主机串口（调试日志）
-    ├── GPIO 按键 ×5 (车门×4 + 档位 P/R/N/D)
-    └── ADC 旋钮 ×2 (方向盘角度 + 车速)
+    └── GPIO 按键 (车门×4 + 档位 P/R/N/D)
 ```
 
 ### 模拟信号源
@@ -47,8 +46,6 @@ PC (宿主机)
 | 车门状态 ×4 | 开关量 | GPIO 按键 | 中断+扫描 | 100ms |
 | 档位 P/R/N/D | 枚举 | GPIO 按键 | 中断 | 变化即报 |
 | 大灯/转向灯/喇叭 | 开关/枚举 | GPIO 按键 | 中断 | 变化即报 |
-| 方向盘角度 | 模拟量 | ADC 旋钮 | PIT 定时器 | 50ms |
-| 车速 | 模拟量 | ADC 旋钮 | PIT 定时器 | 100ms |
 
 ---
 
@@ -101,10 +98,7 @@ CMD(1B) | SIZE(1B) | PAYLOAD(28B) | CRC8(1B)
 | 大灯 | 0x120 | 变化 | B0[0..1] | 0=关,1=近光,2=远光 | — |
 | 转向灯 | 0x121 | 变化 | B0[2..3] | 0=关,1=左,2=右 | — |
 | 喇叭 | 0x130 | 变化 | B0[0] | 0/1 | — |
-| 方向盘角度 | 0x200 | 50ms | B0..1(i16 LSB) | -450°~+450° | 0.1° |
-| 车速 | 0x201 | 100ms | B0..1(u16 LSB) | 0~300 km/h | 0.01 km/h |
-
-**CAN ID 分配:** 0x100 车身域 | 0x200 动力域
+**CAN ID 分配:** 0x100 车身域
 
 ---
 
@@ -142,7 +136,6 @@ CMD(1B) | SIZE(1B) | PAYLOAD(28B) | CRC8(1B)
 │  ① MCAL/（每模块 include/ src/ config/ 三目录）           │
 │     Gpio.h/c  — Gpio_ReadPin / Gpio_WritePin             │
 │     Mcu.h/c   — Mcu_InitClock / Mcu_GetCoreFreq           │
-│     Adc.h/c   — Adc_ReadGroup / Adc_Init                 │
 │     Can.h/c   — Can_Transmit / Can_Receive               │
 │     Spi.h/c   — Spi_WriteIb / Spi_ReadIb                 │
 │     Port.h/c  — Port_SetPinMode / Port_SetMuxMode        │
@@ -162,7 +155,7 @@ CMD(1B) | SIZE(1B) | PAYLOAD(28B) | CRC8(1B)
 
 ```
 main():
-  Mcu_InitClock → Port_Init → Gpio_Init → Adc_Init → Spi_Init → Can_Init
+  Mcu_InitClock → Port_Init → Gpio_Init → Spi_Init → Can_Init
   while(1):
     Swc_SignalGateway_Run()   (周期调度: 50ms/100ms)
       ├── Rte_Read(xxx)
@@ -171,7 +164,6 @@ main():
     __WFI()
 
 中断 (仅调 MCAL, <1ms):
-  PIT_IRQHandler(50ms):  Adc_ReadGroup → 更新共享缓冲区
   GPIO_IRQHandler:       Gpio_ReadPin → 更新共享缓冲区
 ```
 
@@ -210,8 +202,8 @@ main():
 | Event ID | 信号 | 类型 | Event ID | 信号 | 类型 |
 |----------|------|------|----------|------|------|
 | 0x8001 | 车门状态 | u8 | 0x8005 | 喇叭 | u8 |
-| 0x8002 | 档位 | u8 | 0x8006 | 方向盘角度 | i16 |
-| 0x8003 | 大灯 | u8 | 0x8007 | 车速 | u16 |
+| 0x8002 | 档位 | u8 | | | |
+| 0x8003 | 大灯 | u8 | | | |
 | 0x8004 | 转向灯 | u8 | | | |
 
 ### 核心设计决策
@@ -239,7 +231,6 @@ s32k144-virtual-soc-domain-controller/
 │   ├── MCAL/                     ← ① 微控制器抽象层
 │   │   ├── Gpio/   (include/ src/ config/)
 │   │   ├── Mcu/    (include/ src/ config/)
-│   │   ├── Adc/    (include/ src/ config/)
 │   │   ├── Can/    (include/ src/ config/)
 │   │   ├── Spi/    (include/ src/ config/)
 │   │   └── Port/   (include/ src/ config/)
