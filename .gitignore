@@ -36,3 +36,4 @@ tools/uart_logger/uart_logger
 # ---- 其他 ----
 .DS_Store
 Thumbs.db
+10_s32k144_Demo_CAN/

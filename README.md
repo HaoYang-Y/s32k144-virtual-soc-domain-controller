@@ -40,7 +40,7 @@
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 1 | **CAN 收发调通** | MCAL/Can, EcuAbstraction/CanIf | `mcu/MCAL/Can/src/Can.c`, `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ❌ 未通 |
+| 1 | **CAN 收发调通** | MCAL/Can, EcuAbstraction/CanIf | `mcu/MCAL/Can/src/Can.c`, `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 已通 |
 | 2 | **UART 日志输出** | CDD/Uart | `mcu/CDD/Uart/src/Uart.c` | ❌ 未通 |
 
 > CAN 是域控制器的核心通信手段，UART 是调试的基础。这两个是当前最高优先级。
@@ -298,6 +298,45 @@ cd mcu && make
 ```bash
 # 需要 J-Link 调试器连接 S32K144 开发板
 cd mcu && make flash
+```
+
+### CAN 通信验证
+
+**1. Ubuntu 端 — 启动 CAN 接口**
+
+```bash
+# 验证 CANable 设备已识别
+lsusb -d 1d50:606f
+
+# 启动 can0 接口 (500kbps)
+./tools/can_setup.sh up
+
+# 监控 CAN 总线流量
+./tools/can_setup.sh monitor
+```
+
+**2. MCU 端 — 上电运行**
+
+烧录后 MCU 自动以 500kbps 发送 CAN 消息：
+- TX CAN ID: `0x123`，RX CAN ID: `0x100`
+- 数据: 8 字节（2 字节递增计数器 + `AA 55 AA 55 00 00`）
+- LED: 绿闪=心跳, 橙=TX, 红=错误, 蓝=RX
+
+**3. 预期输出**
+
+```
+candump can0:
+  (000.000) can0 123#0100AA55AA550000
+  (001.749) can0 123#0200AA55AA550000
+  (001.749) can0 123#0300AA55AA550000
+```
+
+**4. 双向通信测试 (MCU ↔ Ubuntu)**
+
+```bash
+# Ubuntu → MCU: 发送帧到 MCU 的 RX mailbox (CAN ID 0x100)
+cansend can0 100#AABBCCDDEEFF0011
+# MCU 蓝灯(PTD16)翻转表示接收成功
 ```
 
 ### 编译 SOC 端

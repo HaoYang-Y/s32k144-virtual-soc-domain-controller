@@ -10,7 +10,7 @@ RM      := rm -f
 
 # ---------- 目标芯片 ----------
 MCU     := cortex-m4
-FPU     := -mfloat-abi=soft
+FPU     := -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 # ---------- SDK 根目录 ----------
 SDK_DIR := S32_SDK_S32K1xx_RTM_4.0.2
@@ -22,10 +22,8 @@ INCLUDES  += -I./MCAL/Gpio/include
 INCLUDES  += -I./MCAL/Mcu/include
 INCLUDES  += -I./MCAL/Port/include
 INCLUDES  += -I./MCAL/Spi/include
-INCLUDES  += -I./MCAL/Adc/include
 INCLUDES  += -I./EcuAbstraction/CanIf/include
 INCLUDES  += -I./EcuAbstraction/SpiIf/include
-INCLUDES  += -I./EcuAbstraction/IoHwAb/include
 INCLUDES  += -I./Services/Com/include
 INCLUDES  += -I./Services/PduR/include
 INCLUDES  += -I./Services/CanTp/include
@@ -42,10 +40,8 @@ INCLUDES  += -I./MCAL/Gpio/config
 INCLUDES  += -I./MCAL/Mcu/config
 INCLUDES  += -I./MCAL/Port/config
 INCLUDES  += -I./MCAL/Spi/config
-INCLUDES  += -I./MCAL/Adc/config
 INCLUDES  += -I./EcuAbstraction/CanIf/config
 INCLUDES  += -I./EcuAbstraction/SpiIf/config
-INCLUDES  += -I./EcuAbstraction/IoHwAb/config
 INCLUDES  += -I./Services/Com/config
 INCLUDES  += -I./Services/PduR/config
 INCLUDES  += -I./Services/CanTp/config
@@ -62,8 +58,11 @@ INCLUDES  += -I$(SDK_DIR)/platform/drivers/inc
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/pins
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/clock/S32K1xx
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/flexcan
+INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/edma
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/lpuart
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/interrupt
+INCLUDES  += -I$(SDK_DIR)/platform/pal/inc
+INCLUDES  += -I$(SDK_DIR)/platform/pal/src/can
 INCLUDES  += -I$(SDK_DIR)/rtos/osif
 
 # ---------- 编译标志 ----------
@@ -93,8 +92,8 @@ LDFLAGS += -Wl,-Map=$(BUILD_DIR)/output.map
 LDFLAGS += -Wl,--gc-sections
 LDFLAGS += --entry=Reset_Handler
 LDFLAGS += -nostartfiles -nodefaultlibs -nostdlib
-LDFLAGS += -lgcc -lm -lc -lrdimon
-LDFLAGS += --specs=rdimon.specs
+LDFLAGS += -lgcc -lm -lc -lnosys
+LDFLAGS += --specs=nano.specs --specs=nosys.specs
 
 # ---------- 用户源文件 ----------
 SRCS_USER  := App/Swc_SignalGateway/src/main.c
@@ -106,7 +105,7 @@ SRCS_USER  += MCAL/Mcu/src/Mcu.c
 SRCS_USER  += MCAL/Port/src/pin_mux.c
 SRCS_USER  += MCAL/Port/src/Port.c
 SRCS_USER  += MCAL/Mcu/src/clock_config.c
-SRCS_USER  += MCAL/stubs.c
+# SRCS_USER  += MCAL/stubs.c  (已删除, 编译器运行时库自行提供 memset/memcpy)
 
 # CDD 复杂设备驱动
 SRCS_USER  += CDD/Uart/src/Uart.c
@@ -119,11 +118,9 @@ SRCS_USER  += EcuAbstraction/CanIf/src/CanIf.c
 
 # MCAL 骨架源文件 (待实现)
 #SRCS_USER  += MCAL/Spi/src/Spi.c
-#SRCS_USER  += MCAL/Adc/src/Adc.c
 
 # ECU Abstraction 层骨架源文件 (待实现)
 #SRCS_USER  += EcuAbstraction/SpiIf/src/SpiIf.c
-#SRCS_USER  += EcuAbstraction/IoHwAb/src/IoHwAb.c
 
 # Services 层骨架源文件 (待实现)
 #SRCS_USER  += Services/Com/src/Com.c
@@ -151,6 +148,14 @@ SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpuart/lpuart_hw_access.c
 SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpuart/lpuart_irq.c
 
 
+# SDK EDMA 驱动源文件 (卖家链接了完整 EDMA, 不用 stub)
+SRCS_SDK_EDMA := $(SDK_DIR)/platform/drivers/src/edma/edma_driver.c
+SRCS_SDK_EDMA += $(SDK_DIR)/platform/drivers/src/edma/edma_hw_access.c
+SRCS_SDK_EDMA += $(SDK_DIR)/platform/drivers/src/edma/edma_irq.c
+
+# SDK CAN PAL 源文件
+SRCS_SDK_PAL := $(SDK_DIR)/platform/pal/src/can/can_pal.c
+
 # SDK OSIF 源文件 (BareMetal 版本，不使用 FreeRTOS)
 SRCS_SDK_OSIF := $(SDK_DIR)/rtos/osif/osif_baremetal.c
 
@@ -162,7 +167,7 @@ SRCS_SDK  += $(SDK_DIR)/platform/devices/S32K144/startup/system_S32K144.c
 ASM_SDK  := $(SDK_DIR)/platform/devices/S32K144/startup/gcc/startup_S32K144.S
 
 # 汇总所有源文件和生成的目标文件
-ALL_SRCS := $(SRCS_USER) $(SRCS_SDK_DRV) $(SRCS_SDK_OSIF) $(SRCS_SDK)
+ALL_SRCS := $(SRCS_USER) $(SRCS_SDK_DRV) $(SRCS_SDK_EDMA) $(SRCS_SDK_PAL) $(SRCS_SDK_OSIF) $(SRCS_SDK)
 
 OBJDIR    := $(BUILD_DIR)/obj
 

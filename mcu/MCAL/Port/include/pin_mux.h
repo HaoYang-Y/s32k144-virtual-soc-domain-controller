@@ -15,6 +15,16 @@
 #define CAN0_TX_PIN   5U
 
 /* LED 引脚定义 */
+#define LED_BLUE_PORT  PTD
+#define LED_BLUE_PIN   0U
+#define LED_PTD1_PORT  PTD
+#define LED_PTD1_PIN   1U
+#define LED_RED_PORT   PTD
+#define LED_RED_PIN    15U
+#define LED_GREEN_PORT PTD
+#define LED_GREEN_PIN  16U
+
+/* 向后兼容 */
 #define LED0_PORT     PTD
 #define LED0_PIN      15U
 #define LED1_PORT     PTD
@@ -27,7 +37,7 @@
 #define UART0_TX_PIN   2U
 
 /* 已配置引脚总数 */
-#define NUM_OF_CONFIGURED_PINS0  6U
+#define NUM_OF_CONFIGURED_PINS0  8U
 
 /* 引脚配置数组（在 pin_mux.c 中定义） */
 extern pin_settings_config_t g_pin_mux_InitConfigArr0[NUM_OF_CONFIGURED_PINS0];

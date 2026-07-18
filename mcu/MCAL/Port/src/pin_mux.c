@@ -17,6 +17,38 @@
  * 顺序: LED0 → LED1 → CAN0_RX → CAN0_TX
  */
 pin_settings_config_t g_pin_mux_InitConfigArr0[NUM_OF_CONFIGURED_PINS0] = {
+    /* --- PTD0: 蓝灯 --- */
+    {
+        .base          = PORTD,
+        .pinPortIdx    = 0U,
+        .pullConfig    = PORT_INTERNAL_PULL_NOT_ENABLED,
+        .driveSelect   = PORT_LOW_DRIVE_STRENGTH,
+        .passiveFilter = false,
+        .mux           = PORT_MUX_AS_GPIO,
+        .pinLock       = false,
+        .intConfig     = PORT_DMA_INT_DISABLED,
+        .clearIntFlag  = false,
+        .gpioBase      = PTD,
+        .direction     = GPIO_OUTPUT_DIRECTION,
+        .digitalFilter = false,
+        .initValue     = 1U,     /* 初始高电平 (LED 灭) */
+    },
+    /* --- PTD1: 辅助灯 --- */
+    {
+        .base          = PORTD,
+        .pinPortIdx    = 1U,
+        .pullConfig    = PORT_INTERNAL_PULL_NOT_ENABLED,
+        .driveSelect   = PORT_LOW_DRIVE_STRENGTH,
+        .passiveFilter = false,
+        .mux           = PORT_MUX_AS_GPIO,
+        .pinLock       = false,
+        .intConfig     = PORT_DMA_INT_DISABLED,
+        .clearIntFlag  = false,
+        .gpioBase      = PTD,
+        .direction     = GPIO_OUTPUT_DIRECTION,
+        .digitalFilter = false,
+        .initValue     = 1U,     /* 初始高电平 (LED 灭) */
+    },
     /* --- PTD15: LED0 --- */
     {
         .base          = PORTD,

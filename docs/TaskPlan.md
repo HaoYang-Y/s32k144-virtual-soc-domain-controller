@@ -1,9 +1,10 @@
 # Domain Controller 任务计划
 
 > 基于实际项目结构，按 AUTOSAR CP/AP 分层组织。
-> 当前日期: 2026-06-19
-> 
-> **🔥 重点**: CAN 和 UART 尚未调通，是当前最高优先级任务。
+> 当前日期: 2026-07-18
+>
+> **CAN 已调通** ✅ — MCAL Can 驱动底层改用 CAN PAL，每发前重配 MB，
+> CANable (gs_usb, 1d50:606f) 500kbps 稳定接收。双向通信验证通过。
 
 ---
 
@@ -14,7 +15,7 @@
 | **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ⏳ 骨架已有（SDK API） |
 | **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ⏳ 骨架已有（clock_config + Mcu） |
 | **MCAL** | Adc | `mcu/MCAL/Adc/` | ⏳ 骨架已有 |
-| **MCAL** | Can | `mcu/MCAL/Can/` | ⏳ 骨架已有，**未调通** 🔥 |
+| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 已调通 (500kbps, 双向通信) |
 | **MCAL** | Spi | `mcu/MCAL/Spi/` | ⏳ 骨架已有 |
 | **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有（pin_mux + Port） |
 | **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ⏳ 骨架已有 |
@@ -46,20 +47,32 @@
 - `mcu/EcuAbstraction/CanIf/src/CanIf.c` — 调用 Can_* API
 
 **子任务**:
-- [ ] 确认 CAN 时钟使能 (PCC → FlexCAN0)
-- [ ] 配置引脚复用 (Port 模块: PTE4=TX, PTE5=RX)
-- [ ] 实现 Can_Init (500kbps, 标准帧)
-- [ ] 实现 Can_Transmit (阻塞发送，指定 MB 和 ID)
-- [ ] 实现 Can_Receive (阻塞接收，轮询 RX MB)
-- [ ] CanIf 封装 Can_Transmit/Can_Receive
-- [ ] USB-CAN 分析仪 candump 验证
-- [ ] 烧录到 S32K144 验证
+- [x] 确认 CAN 时钟使能 (PCC → FlexCAN0, SOSC_DIV1=8MHz)
+- [x] 配置引脚复用 (Port 模块: PTE4=CAN0_RX, PTE5=CAN0_TX, ALT5)
+- [x] 实现 Can_Init (500kbps, 13TQ: prop=7/ps1=4/ps2=1, pre_div=0)
+- [x] 实现 Can_Write (每次发前重配 MB: CAN_ConfigTxBuff → CAN_Send)
+- [x] 实现 Can_Read (轮询, CAN_Receive PAL API)
+- [x] CanIf 封装 (骨架已有，上层通过 CanIf_Transmit 调用 Can_Write)
+- [x] USB-CAN 分析仪 candump 验证 — CANable (gs_usb, 1d50:606f)
+- [x] 烧录到 S32K144 验证
+
+**Bug 修复记录**:
+> 1. **CANH/CANL 接反** → 对调
+> 2. **CAN FD 未关闭** → Can_BuildSdkConfig 中显式 fd_enable=false
+> 3. **LED 引脚映射错误** → PTD0=橙, PTD1=红, PTD15=绿, PTD16=蓝
+> 4. **Mailbox 状态不释放** → 每发前调 CAN_ConfigTxBuff 重配 TX MB（关键修复）
+> 5. **MCAL Can.c 改用 PAL 层实现** — 保持 AUTOSAR Can.h 接口不变，
+>    底层从 FLEXCAN_DRV 切换到 CAN PAL，解决状态管理和中断依赖问题。
+> 6. **编译参数对齐卖家** — `-mfloat-abi=hard -mfpu=fpv4-sp-d16`，
+>    `--specs=nano.specs`，链接完整 EDMA 驱动。
+> 7. **时钟配置** — FlexCAN0 PCC=CLK_SRC_OFF, peClkSrc=CAN_CLK_SOURCE_OSC
+> 8. 新增 `tools/can_setup.sh` 一键管理 can0 接口。
 
 **验证方法**:
 ```
 S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ──── candump can0
-  发送 0x123#DEADBEEF  ──────────────→  捕获 ID=0x123, Data=DE AD BE EF
-  USB-CAN 发送 ←────────────────────  收到帧 → UART 打印
+  每 ~1.7s 发送 0x123#XXXXXXXXAA55AA55 ──→  捕获 ID=0x123
+  cansend can0 100#AABBCCDD ──→  MCU Can_Read 接收 → LED 翻转
 ```
 
 ### 任务 2: UART 日志输出
@@ -192,4 +205,4 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ---
 
-> 最后更新: 2026-06-19
+> 最后更新: 2026-07-17
