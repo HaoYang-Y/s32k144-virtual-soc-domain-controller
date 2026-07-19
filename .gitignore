@@ -27,6 +27,9 @@ obj_ram/
 # ---- PDF 文件 ----
 *.pdf
 
+# ---- 个人简历 ----
+docs/resume/
+
 # ---- 日志文件（运行时生成） ----
 tools/uart_logger/log/
 
