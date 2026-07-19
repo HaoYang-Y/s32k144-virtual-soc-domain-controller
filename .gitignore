@@ -24,6 +24,10 @@ __pycache__/
 obj_flash/
 obj_ram/
 
+# ---- SDK（不参与编译，本地自行下载） ----
+mcu/S32_SDK_S32K1xx_RTM_4.0.2/*
+!mcu/S32_SDK_S32K1xx_RTM_4.0.2/.gitkeep
+
 # ---- PDF 文件 ----
 *.pdf
 
