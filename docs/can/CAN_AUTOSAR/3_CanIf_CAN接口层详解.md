@@ -49,7 +49,7 @@ CanIf_RxIndication(0, &rxIfPdu);      // "收到了 PDU 1" — 不需要知道�
 
 ## 2. 核心概念：PDU
 
-PDU（Protocol Data Unit）这个词贯穿整个 AUTOSAR 栈。在 CanIf 层，一个 PDU 就是**一帧 CAN 报文**。
+PDU（Protocol Data Unit，协议数据单元）这个词贯穿整个 AUTOSAR 栈。在 CanIf 层，一个 PDU 就是**一帧 CAN 报文**。
 
 ### 2.1 CanIf_PduType — PDU 数据
 
@@ -79,7 +79,7 @@ typedef struct {
     uint16_t  pdu_id;         // PDU 逻辑编号（主键）
     uint8_t   controller_id;  // 使用哪个 CAN 控制器 (0 = FlexCAN0)
     uint32_t  can_id;         // 对应的 CAN 报文 ID
-    uint8_t   dlc;            // 数据长度码 (1~8)
+    uint8_t   dlc;            // DLC (Data Length Code)，数据长度码 (1~8)
 } CanIf_PduConfigType;
 ```
 
@@ -145,29 +145,199 @@ CanIf_Cfg.c 和 CanIf_PduId.h 自动更新，一条 C 代码都不用改。
 
 ---
 
-## 4. 核心 API
+## 4. 数据传输机制 — CanIf 如何把数据交给驱动
 
-### 4.1 CanIf_Init — 对标 AUTOSAR SWS_CanIf_00013
+这是本文最核心的一节。用一个具体例子走通 TX 和 RX 的完整数据流。
+
+### 4.0 先看全景
+
+```
+上层 (main.c/PduR)             CanIf 层                    MCAL 层 (Can_Write)
+═══════════════════          ═══════════                  ═══════════════════
+                              ┌─────────────────┐
+CanIf_PduType {               │ CanIf_PduConfig[]│        Can_PduType {
+  .id     = PDU_ID (0)  ──→  │  查表: PDU 0     │ ──→    .id     = 0x123
+  .length = 8                 │  → can_id=0x123  │        .length = 8
+  .data   → txBuf[8]    ──→  │  → 逐字节拷贝    │ ──→    .data[8]= {...}
+}                             └─────────────────┘        }
+                                                               │
+                                                     Can_Write(0, MB0, &pdu)
+                                                               │
+                                                       FlexCAN 硬件 → CAN 总线
+```
+
+**CanIf 的职责就一件事**：把上层的 PDU ID（逻辑编号）翻译成 CAN ID（硬件地址），然后原样转发数据。
+
+### 4.1 TX 路径详解：从 PDU 到 CAN 帧
+
+假设上层要发一帧数据到 CAN ID `0x123`，payload = `{0x01, 0x02, 0xAA, 0x55, 0xAA, 0x55, 0x00, 0x00}`。
+
+**第 1 步：上层构建 PDU**
+
+```c
+// main.c — 上层只填 PDU ID + 数据，不填 CAN ID
+uint8_t txData[8] = {0x01, 0x02, 0xAA, 0x55, 0xAA, 0x55, 0x00, 0x00};
+
+CanIf_PduType txPdu = {
+    .id     = CANIF_PDU_ID_TX_0x123,   // 只说"我要发 PDU 0"
+    .length = 8U,
+    .data   = txData                    // 指向数据缓冲区
+};
+
+CanIf_Transmit(0, &txPdu);
+```
+
+此时 `txPdu` 里**没有 CAN ID**——只有 PDU 编号 0。
+
+**第 2 步：CanIf 查配置表，翻译 PDU ID → CAN ID**
+
+```c
+// CanIf.c — CanIf_Transmit() 内部
+// 配置表里存的映射关系 (从 signals.yaml 自动生成):
+//
+//   CanIf_PduConfig[0] = {.pdu_id=0, .can_id=0x123, .controller=0, .dlc=8}
+//   CanIf_PduConfig[1] = {.pdu_id=1, .can_id=0x100, .controller=0, .dlc=8}
+
+const CanIf_PduConfigType *cfg = CanIf_FindConfigByPduId(txPdu.id);  // PDU 0 → can_id=0x123
+```
+
+**第 3 步：格式转换 — CanIf_PduType → Can_PduType**
+
+```c
+// CanIf.c — 构造 MCAL 层认识的格式
+Can_PduType canPdu = {0};            // 全量零初始化
+
+canPdu.id     = cfg->can_id;         //  0x123  ← 从配置表来，不是上层传的！
+canPdu.length = txPdu.length;        //  8
+
+// 逐字节拷贝：指针 → 定长数组
+canPdu.data[0] = txPdu.data[0];     // 0x01
+canPdu.data[1] = txPdu.data[1];     // 0x02
+canPdu.data[2] = txPdu.data[2];     // 0xAA
+// ... 拷贝全部 8 字节
+```
+
+转换前后的对比：
+
+| | 转换前 (CanIf_PduType) | 转换后 (Can_PduType) |
+|--|----------------------|---------------------|
+| ID | `0` (PDU 编号) | `0x123` (CAN 报文 ID) |
+| 数据 | `uint8_t *data` 指向 `txData[8]` | `uint8_t data[8]` 定长数组 |
+| 帧类型 | 无 | `is_extended=false, is_remote=false` |
+
+**第 4 步：交给 MCAL 驱动**
+
+```c
+// CanIf.c — 最后一步：调用 MCAL
+status_t ret = Can_Write(0, CANIF_TX_HTH(=0), &canPdu);
+//                                                      ↑
+//                          Can_PduType 已包含完整的 CAN ID + 数据
+//                          Can_Write 内部: CAN_ConfigTxBuff → CAN_Send → 硬件发送
+```
+
+**完整数据流（一次 TX 的字节级追踪）**：
+
+```
+main.c                          CanIf.c                     MCAL Can.c             硬件
+───────                        ────────                    ──────────            ──────
+txData[8] = {0x01,0x02,        CanIf_Transmit()
+             0xAA,0x55,          │
+             0xAA,0x55,          ├─ 查表: PDU 0
+             0x00,0x00}          │   → can_id=0x123
+             │                   │
+txPdu.id=0   │                   ├─ 构造 canPdu:
+txPdu.len=8  │                   │   .id=0x123
+txPdu.data ──┼──→ ─ ─ ─ ─ ─ ─ → │   .data[0]=0x01
+             │    (指针传递,      │   .data[1]=0x02    Can_Write(0,MB0,&canPdu)
+             │     不拷贝数据)    │   ...                │
+             │                   │   .data[7]=0x00      ├─ CAN_ConfigTxBuff(MB0)
+             │                   │                      ├─ CAN_Send(MB0)
+             │                   └─ Can_Write(...) ───→ └─ FLEXCAN_DRV_Send()
+                                                                               │
+                                                                        CAN_H/CAN_L
+                                                                        总线上的帧:
+                                                                        ID=0x123
+                                                                        DLC=8
+                                                                        data=01 02 AA 55...
+```
+
+### 4.2 RX 路径详解：从 CAN 帧到 PDU
+
+RX 方向是 TX 的逆过程。
+
+**第 1 步：MCAL 收到一帧**
+
+```c
+// main.c 轮询 MCAL
+Can_PduType rxCanPdu;
+if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
+    // rxCanPdu.id     = 0x100  ← 硬件收到的 CAN ID
+    // rxCanPdu.length = 8
+    // rxCanPdu.data   = {...}   ← 定长数组
+```
+
+**第 2 步：CAN ID → PDU ID 反查**
+
+```c
+    // main.c — 把 CAN ID 翻译成 PDU ID
+    CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxCanPdu.id);
+    // 0x100 → 查 CanIf_PduConfig[] → 找到 PDU 1
+```
+
+**第 3 步：构造 CanIf_PduType，通知 CanIf 层**
+
+```c
+    CanIf_PduType rxIfPdu = {
+        .id     = pduId,            // 1 = CANIF_PDU_ID_RX_0x100
+        .length = rxCanPdu.length,  // 8
+        .data   = rxCanPdu.data     // 直接指向 Can_PduType 的 data[8] 数组
+    };
+    CanIf_RxIndication(0, &rxIfPdu);
+```
+
+**关键区别**：RX 方向 `CanIf_PduType.data` **直接指向** `Can_PduType.data[8]` 数组——不拷贝数据，零开销。TX 方向必须拷贝（因为 `uint8_t *data` 指向的缓冲区可能在上层函数返回后失效）。
+
+### 4.3 TX vs RX 数据拷贝策略
+
+| | TX (CanIf_Transmit) | RX (CanIf_RxIndication) |
+|--|---------------------|------------------------|
+| 数据方向 | 上层 → CanIf → MCAL | MCAL → CanIf → 上层 |
+| 数据拷贝 | **需要拷贝**（逐字节） | **零拷贝**（直接传指针） |
+| 原因 | 上层缓冲区可能在 `CanIf_Transmit` 返回后释放 | `Can_PduType.data[8]` 在 `Can_Read` 的调用栈上，生命周期覆盖整个处理过程 |
+| ID 转换 | PDU ID → CAN ID（查 `pdu_id` 字段） | CAN ID → PDU ID（查 `can_id` 字段） |
+
+---
+
+## 5. 核心 API
+
+### 5.1 CanIf_Init — 对标 AUTOSAR SWS_CanIf_00013
 
 ```c
 void CanIf_Init(void);
 ```
 
-> **AUTOSAR 规范定义**：初始化 CanIf 模块及所有已配置的 CAN 控制器。本项目中 MCAL Can_Init 已在 main.c 中先行调用，CanIf_Init 仅完成模块级初始化。
+> **AUTOSAR 规范定义**：初始化 CanIf 模块及所有已配置的 CAN 控制器。在 AUTOSAR 标准中，BSW 模块初始化由 EcuM（ECU Manager）统一调度：`MCAL Init → ECU Abstraction Init → Services Init → RTE Init`。本项目由 `EcuM_Init()` 按此顺序调用各模块的 `_Init()`。
 
 当前实现简单设置内部状态标志 `canif_state = 1`（已初始化），后续所有 API 调用都会检查此标志。
 
-**调用时机**（在 `main.c` 中）：
+**调用链条**：
 
 ```c
-Can_Init(&can0_cfg);                       // 1. 先初始化硬件 (MCAL)
-Can_SetControllerMode(0, CAN_CS_STARTED);  // 2. 启动控制器
-CanIf_Init();                              // 3. 再初始化 CanIf 模块
+// main.c — MCAL 硬件初始化在此（依赖具体硬件配置结构体）
+Can_Init(&can0_cfg);
+Can_SetControllerMode(0, CAN_CS_STARTED);
+
+// EcuM.c — BSW 模块按 AUTOSAR 顺序初始化
+EcuM_Init()
+  └── CanIf_Init();          // ← 由 EcuM 统一调用，不在 main.c 中直接调
+  //    SpiIf_Init();        // TODO
+  //    PduR_Init();         // TODO
+  //    Com_Init();          // TODO
 ```
 
 ---
 
-### 4.2 CanIf_Transmit — 对标 AUTOSAR SWS_CanIf_00050
+### 5.2 CanIf_Transmit — 对标 AUTOSAR SWS_CanIf_00050
 
 ```c
 uint8_t CanIf_Transmit(CanIf_ControllerType Controller, CanIf_PduType *PduPtr);
@@ -207,7 +377,7 @@ CanIf_Transmit(Controller=0, PduPtr)
            → STATUS_ERROR   → LOG_E + 返回 E_NOT_OK
 ```
 
-> ⚠️ **踩坑记录**：第 3 步 `canPdu = {0}` 必须全量初始化。我们最初只赋值了 `id`/`length`/`data`，漏了 `is_extended` 和 `is_remote`。栈上的垃圾值导致标准帧被当扩展帧发出，CANable 完全收不到。板子指示灯全正常，就是总线上没数据。见 [./2_MCAL_Can驱动详解.md](./2_MCAL_Can驱动详解.md) 第 3.1 节。
+> ⚠️ **踩坑记录**：第 3 步 `canPdu = {0}` 必须全量初始化。我们最初只赋值了 `id`/`length`/`data`，漏了 `is_extended` 和 `is_remote`。栈上的垃圾值导致标准帧被当扩展帧发出，CANable 完全收不到。板子指示灯全正常，就是总线上没数据。根因是 `Can_PduType` 含 `bool` 字段（见 [2_MCAL_Can驱动详解 §3.1](./2_MCAL_Can驱动详解.md) 踩坑记录），CanIf 的修复方法是 `= {0}` 全量零初始化。
 
 **调用示例**：
 
@@ -226,7 +396,7 @@ if (ret != E_OK) {
 
 ---
 
-### 4.3 CanIf_RxIndication — 对标 AUTOSAR SWS_CanIf_00030
+### 5.3 CanIf_RxIndication — 对标 AUTOSAR SWS_CanIf_00030
 
 ```c
 void CanIf_RxIndication(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
@@ -253,7 +423,7 @@ if (Can_Read(0, RX_MB, &rxCanPdu) == STATUS_SUCCESS) {
 
 ---
 
-### 4.4 CanIf_TxConfirmation — 对标 AUTOSAR SWS_CanIf_00040
+### 5.4 CanIf_TxConfirmation — 对标 AUTOSAR SWS_CanIf_00040
 
 ```c
 void CanIf_TxConfirmation(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
@@ -265,7 +435,7 @@ void CanIf_TxConfirmation(CanIf_ControllerType Controller, const CanIf_PduType *
 
 ---
 
-### 4.5 CanIf_FindPduIdByCanId — CAN ID → PDU ID 反查
+### 5.5 CanIf_FindPduIdByCanId — CAN ID → PDU ID 反查
 
 ```c
 CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
@@ -277,9 +447,9 @@ RX 路径专用辅助函数。轮询收到 `Can_PduType`（含 CAN ID 0x100）�
 
 ---
 
-## 5. DET 开发错误检测
+## 6. DET 开发错误检测
 
-CanIf 实现了 AUTOSAR DET（Development Error Tracer），在开发阶段通过日志暴露编程错误。
+CanIf 实现了 AUTOSAR DET（Development Error Tracer，开发错误追踪），在开发阶段通过日志暴露编程错误。DET 是 AUTOSAR 标准化的错误报告机制（SWS_CanIf 的 DET 章节要求每个 API 在入参非法时通过 DET 上报 ModuleId + ApiId + ErrorId）。
 
 | 错误类型 | Error ID | 检查条件 | 触发场景 |
 |----------|----------|---------|---------|
@@ -300,49 +470,17 @@ LOG_E("CanIf", "Transmit: not initialized (Mod=0x32 Api=0x01 Err=0x02)")
 
 ---
 
-## 6. 收发路径全景
+## 7. 收发路径速查
 
-### 6.1 TX 路径（自上而下）
+> 详细字节级追踪见 [第 4 节：数据传输机制](#4-数据传输机制--canif-如何把数据交给驱动)。
 
-```
-main.c
-  │ CanIf_Transmit(0, &txPdu)           // PduPtr.id = CANIF_PDU_ID_TX_0x123
-  ▼
-CanIf_Transmit()
-  │ 1. DET 校验
-  │ 2. 查表: PDU 0 → can_id=0x123
-  │ 3. 构造 Can_PduType {id=0x123, length=8, data[8]}
-  │ 4. Can_Write(0, HTH=0, &canPdu)
-  ▼
-Can_Write()                              ← 详见 2_MCAL_Can驱动详解.md
-  │ 1. 参数校验
-  │ 2. CAN_ConfigTxBuff()  ← 重配 TX MB
-  │ 3. CAN_Send(MB0, &msg)
-  ▼
-FlexCAN 硬件 → CAN 收发器 → CAN_H / CAN_L → 总线
-```
+**TX**: `main.c → CanIf_Transmit() → 查表(PDU→CAN ID) → Can_Write() → 硬件`
 
-### 6.2 RX 路径（自下而上）
-
-```
-CAN 总线 → CAN 收发器 → FlexCAN 硬件 (RX MB1 匹配 ID=0x100)
-  │
-  ▼
-main.c 轮询
-  │ Can_Read(0, HRH=1, &rxCanPdu)         // 收到 {id=0x100, data[8]}
-  │ pduId = CanIf_FindPduIdByCanId(0x100)  // → PDU 1
-  │ CanIf_RxIndication(0, &rxIfPdu)        // 通知 CanIf: "PDU 1 到了"
-  ▼
-CanIf_RxIndication()
-  │ 1. DET 校验
-  │ 2. PDU ID 合法？→ 是
-  │ 3. LOG_D 记录
-  │ 4. [预留] PduR_CanIfRxIndication(1, &info)
-```
+**RX**: `硬件 → Can_Read() → CanIf_FindPduIdByCanId(CAN ID→PDU) → CanIf_RxIndication()`
 
 ---
 
-## 7. 改造前后对比
+## 8. 改造前后对比
 
 ### 改造前 — 裸 Can API
 
@@ -388,7 +526,7 @@ if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
 
 ---
 
-## 8. 文件清单
+## 9. 文件清单
 
 | 文件 | 来源 | 说明 |
 |------|------|------|
@@ -402,7 +540,7 @@ if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
 
 ---
 
-## 9. 与上下层的关系
+## 10. 与上下层的关系
 
 ```
 MCAL Can (2_MCAL_Can驱动详解.md) ──→ CanIf (本文) ──→ PduR ──→ Com ──→ RTE ──→ SWC

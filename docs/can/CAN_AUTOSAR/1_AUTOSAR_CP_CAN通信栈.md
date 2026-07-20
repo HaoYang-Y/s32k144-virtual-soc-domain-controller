@@ -9,6 +9,21 @@
 
 AUTOSAR CP 将 CAN 通信拆分为五个层次,从应用信号到物理总线逐层向下：
 
+> **术语速查**：本文用到的缩写及其全称。
+> - **SWC** (Software Component) — 应用软件组件，写业务逻辑的地方
+> - **RTE** (Runtime Environment) — 运行时环境，SWC 与 BSW 之间的胶水层
+> - **Com** (Communication) — 通信服务层，信号 ↔ PDU 的打包/解包
+> - **PduR** (PDU Router) — PDU 路由器，在模块间转发 PDU
+> - **PDU** (Protocol Data Unit) — 协议数据单元，AUTOSAR 栈中各层传递的数据包
+> - **I-PDU** (Interaction Layer PDU) — Com 层传递的 PDU，含多个信号
+> - **CanTp** (CAN Transport Protocol) — CAN 传输层，ISO 15765-2 多帧分包/重组
+> - **CanIf** (CAN Interface) — CAN 接口层，PDU ↔ CAN 帧的硬件无关抽象
+> - **MCAL** (Microcontroller Abstraction Layer) — 微控制器抽象层，直接访问硬件寄存器
+> - **HTH** (Hardware Transmit Handle) — 硬件发送句柄，即 TX Mailbox 索引
+> - **HRH** (Hardware Receive Handle) — 硬件接收句柄，即 RX Mailbox 索引
+> - **MB** (Message Buffer / Mailbox) — FlexCAN 硬件中的消息缓冲单元
+> - **DET** (Development Error Tracer) — 开发错误追踪，AUTOSAR 标准错误报告机制
+
 ```
  ┌──────────────────────────────────────────────────────────────────────┐
  │                      SWC (应用软件组件)                               │
@@ -66,9 +81,11 @@ AUTOSAR CP 将 CAN 通信拆分为五个层次,从应用信号到物理总线逐
 
 ## 2. 各层详细说明
 
-### 2.1 Can — MCAL 驱动层（已实现）
+### 2.1 Can — MCAL 驱动层（已实现 ✅）
 
 **职责**：直接访问 CAN 硬件（FlexCAN 控制器），发送/接收物理 CAN 帧。
+
+> **SWS 规范**：`Can_Init` (SWS_Can_00013)、`Can_Write` (SWS_Can_00015)、`Can_Read` (SWS_Can_00016)、`Can_SetControllerMode` (SWS_Can_00019)、`Can_DeInit` (SWS_Can_00014)。
 
 **文件位置**：
 - `mcu/MCAL/Can/include/Can.h` — 类型定义和 API 声明
@@ -173,36 +190,42 @@ MCAL 封装的好处：
 
 ---
 
-### 2.2 CanIf — CAN Interface 层（骨架）
+### 2.2 CanIf — CAN Interface 层（已实现 ✅）
 
 **职责**：在 MCAL Can 驱动之上提供**硬件无关**的 CAN 通信接口。
 对上（PduR/CanTp）隐藏具体硬件细节，对下（Can）统一调用 MCAL 接口。
 
+> **SWS 规范**：`CanIf_Transmit` (SWS_CanIf_00050)、`CanIf_RxIndication` (SWS_CanIf_00030)、`CanIf_TxConfirmation` (SWS_CanIf_00040)、DET ModuleId = 0x32。
+
 **文件位置**：
 - `mcu/EcuAbstraction/CanIf/include/CanIf.h` — 类型定义和 API 声明
-- `mcu/EcuAbstraction/CanIf/src/CanIf.c` — 当前为骨架实现
+- `mcu/EcuAbstraction/CanIf/src/CanIf.c` — 完整实现（~210 行）
+- `mcu/EcuAbstraction/CanIf/config/CanIf_Cfg.c` — PDU 配置表（由 YAML 自动生成）
 
 **核心 API**：
 
 ```c
-// CanIf.h 第 41~56 行
+// CanIf.h 第 41~61 行
+void    CanIf_Init(void);
+uint8_t CanIf_Transmit(CanIf_ControllerType Controller, CanIf_PduType *PduPtr);
 void    CanIf_RxIndication(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
 void    CanIf_TxConfirmation(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
-uint8_t CanIf_Transmit(CanIf_ControllerType Controller, CanIf_PduType *PduPtr);
-void    CanIf_Init(void);
+CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 ```
 
-**当前状态**：骨架（SKELETON）。
+**当前状态**：已实现（详见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md)）。
 
-`CanIf.c` 已实现：
-- 模块初始化（`CanIf_Init`, 第 39~43 行）
-- AUTOSAR 风格错误检测框架（DET, CanIf.c 第 18~32 行）
-  - `CANIF_MODULE_ID = 0x32`、开发错误检测、参数空指针检查、未初始化检查
+已实现功能：
+- `CanIf_Transmit` — PDU 查表 → 格式转换 → `Can_Write`（完整实现）
+- `CanIf_RxIndication` — PDU ID 校验 → 日志记录（实现，PduR 转发预留）
+- `CanIf_TxConfirmation` — DET 检查 → 日志记录（实现，PduR 转发预留）
+- DET 错误检测框架（ModuleId=0x32, 3 种 ErrorId）
+- `CanIf_FindPduIdByCanId` — CAN ID → PDU ID 反查（RX 路径辅助）
+- 配置表由 `signals.yaml` 自动生成（`CanIf_Cfg.c` + `CanIf_PduId.h`）
 
-`CanIf.c` 待实现（标注 TODO）：
-- `CanIf_Transmit` → 调用 `Can_Write`（CanIf.c 第 106 行）
-- `CanIf_RxIndication` → 转发给 `PduR_CanIfRxIndication`（CanIf.c 第 63 行）
-- `CanIf_TxConfirmation` → 通知 PduR 发送完成（CanIf.c 第 84 行）
+待后续补全：
+- `CanIf_RxIndication` → 转发给 `PduR_CanIfRxIndication`（等 PduR 层实现）
+- `CanIf_TxConfirmation` → 转发给 `PduR_CanIfTxConfirmation`（等 PduR 层实现）
 
 ---
 
@@ -400,30 +423,31 @@ SWC/App
     Com:    [SKELETON] 仅有类型和函数声明，无实现
     PduR:   [SKELETON] 仅有类型和函数声明，无实现
     CanTp:  [SKELETON] 仅有类型和函数声明，无实现
-    CanIf:  [SKELETON] 头文件完整，源文件有 DET 框架但收发逻辑未实现
-    Can:    [已实现]    基于 NXP CAN PAL 的完整 MCAL 驱动
+    EcuM:   [已实现]    按 AUTOSAR 顺序调度 BSW 模块初始化
+    CanIf:  [已实现]    PDU 抽象 + DET + YAML 自动配置，详见 3_CanIf_CAN接口层详解
+    Can:    [已实现]    基于 NXP CAN PAL 的完整 MCAL 驱动，详见 2_MCAL_Can驱动详解
 ```
 
 ### 4.2 当前实际使用的数据路径
 
-由于 CanIf/PduR/Com 尚未实现，当前 `main.c` **直接调用 MCAL Can 接口**：
+已实现两层 AUTOSAR 抽象（Can + CanIf），`main.c` 通过 `CanIf_Transmit` 发送、轮询 `Can_Read` 接收：
 
 ```c
-// mcu/App/Swc_SignalGateway/src/main.c (第 41~59 行)
-// 当前跳过了 Com/PduR/CanTp/CanIf 四层，直接操作 MCAL
+// mcu/App/Swc_SignalGateway/src/main.c — 当前数据流
+// BSW 初始化: EcuM_Init() → CanIf_Init()
 
 for (;;) {
-    // TX: 直接构造 Can_PduType → Can_Write
-    Can_PduType tx = {.id = 0x123UL, .length = 8U};
-    tx.data[0] = cnt & 0xFF;
-    // ...
-    status_t s = Can_Write(0, TX_MB, &tx);
+    // TX: CanIf_Transmit(PDU_ID) → Can_Write(CAN_ID) → 硬件
+    CanIf_PduType txPdu = {.id = CANIF_PDU_ID_TX_0x123, .length = 8U, .data = txData};
+    CanIf_Transmit(0, &txPdu);
 
-    // RX: 直接 Can_Read
+    // RX: Can_Read → CanIf_FindPduIdByCanId → CanIf_RxIndication
     Can_PduType rx;
     if (Can_Read(0, RX_MB, &rx) == STATUS_SUCCESS) {
-        // 处理接收数据
+        pduId = CanIf_FindPduIdByCanId(rx.id);
+        CanIf_RxIndication(0, &rxIfPdu);
     }
+    cnt++; delay_ms(500);
 }
 ```
 
@@ -432,16 +456,15 @@ for (;;) {
 当需要完整 AUTOSAR Com 栈时（如需要信号级通信、多帧 OTA、UDS 诊断等），
 按以下顺序实现：
 
-1. **CanIf → Can 桥接**：实现 `CanIf_Transmit()` 调用 `Can_Write()`，
-   实现 `CanIf_RxIndication()` 的接收回调机制
+1. ✅ **CanIf → Can 桥接**：已完成。`CanIf_Transmit()` → `Can_Write()`，`CanIf_RxIndication()` 接收回调机制
 
-2. **PduR 路由表**：实现 `PduR_ComTransmit()` 路由到 CanIf，
-   实现 `PduR_CanIfRxIndication()` 路由到 Com
+2. ⬜ **PduR 路由表**：实现 `PduR_ComTransmit()` 路由到 CanIf，`PduR_CanIfRxIndication()` 路由到 Com
 
-3. **Com 信号打包**：实现信号到 PDU 的位布局，实现 `Com_SendSignal()` 和
-   `Com_ReceiveSignal()`
+3. ⬜ **Com 信号打包**：实现信号到 PDU 的位布局，实现 `Com_SendSignal()` 和 `Com_ReceiveSignal()`
 
-4. **CanTp 多帧**（可选）：实现 ISO 15765-2 的 SF/FF/CF/FC 处理
+4. ⬜ **中断模式**：将 RX 从轮询迁移到硬件中断驱动（方案见 [中断模式迁移方案](./中断模式迁移方案.md)）
+
+5. ⬜ **CanTp 多帧**（可选）：实现 ISO 15765-2 的 SF/FF/CF/FC 处理
 
 ---
 

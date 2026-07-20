@@ -1,14 +1,15 @@
 /**
  * CAN 测试 — 使用 AUTOSAR CanIf 接口（ECU Abstraction 层）
  *
- * 分层调用链:
- *   TX: main → CanIf_Transmit() → Can_Write() → 硬件
- *   RX: main → Can_Read() → CanIf_RxIndication()          ← CanIf 层就位
+ * BSW 初始化顺序（由 EcuM 统一调度）:
+ *   MCAL: Can_Init() → Can_SetControllerMode(STARTED)
+ *   ECU Abstraction: EcuM_Init() → CanIf_Init()
+ *   Services:  (PduR_Init, Com_Init 待实现后加入 EcuM)
+ *   RTE:       (Rte_Init 待实现后加入 EcuM)
  *
- * 后续步骤:
- *   Step 2: main → PduR → CanIf → Can                     ← PduR 就位
- *   Step 3: main → Com → PduR → CanIf → Can               ← Com 就位
- *   Step 4: main → RTE → Com → PduR → CanIf → Can         ← 完整五层
+ * 数据流:
+ *   TX: main → CanIf_Transmit() → Can_Write() → 硬件
+ *   RX: main → Can_Read() → CanIf_RxIndication()
  *
  * PTD0=橙(TX) PTD1=红(错误) PTD15=绿(心跳) PTD16=蓝(RX)
  */
@@ -17,6 +18,7 @@
 #include "Can.h"
 #include "CanIf.h"
 #include "CanIf_PduId.h"
+#include "EcuM.h"
 #include "pins_driver.h"
 #include <stdint.h>
 
@@ -51,8 +53,8 @@ int main(void)
     }
     Can_SetControllerMode(0, CAN_CS_STARTED);
 
-    /* --- CanIf 层初始化 (ECU Abstraction) --- */
-    CanIf_Init();
+    /* --- BSW 模块初始化 (ECU Abstraction → Services → RTE) --- */
+    EcuM_Init();  /* 内部按 AUTOSAR 顺序调用 CanIf_Init() 等 */
 
     for(;;)
     {

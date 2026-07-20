@@ -61,7 +61,12 @@ Can_Write(Controller, Hth, &pdu);
 
 ## 2. 硬件基础：FlexCAN Mailbox
 
-在深入代码之前，必须理解一个硬件概念——**Mailbox（MB，消息邮箱）**。
+在深入代码之前，必须理解一个硬件概念——**Mailbox（MB，消息邮箱）**。FlexCAN 是 NXP S32K144 片内的 CAN 控制器 IP。
+
+每个 MB 是一个独立的硬件缓冲单元，由两个关键编号定位：
+
+- **HTH**（Hardware Transmit Handle）— 发送用的 MB 索引，`Can_Write(Controller, Hth, &pdu)` 的第二个参数
+- **HRH**（Hardware Receive Handle）— 接收用的 MB 索引，`Can_Read(Controller, Hrh, &pdu)` 的第二个参数
 
 S32K144 的 FlexCAN 控制器有 **16 个 Mailbox**，每个 MB 是一个独立的硬件缓冲单元。你可以把 MB 想象成停车位：
 
@@ -108,7 +113,7 @@ typedef struct {
 } Can_PduType;
 ```
 
-> ⚠️ **踩坑记录**：`is_extended` 和 `is_remote` 必须显式初始化为 `false`。如果栈上不初始化，垃圾值可能导致标准帧被当成扩展帧发出，对方收不到。我们实际踩过这个坑——见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md) 第 4.2 节。
+> ⚠️ **踩坑记录**：`is_extended` 和 `is_remote` 必须显式初始化为 `false`。如果栈上不初始化（如 `Can_PduType canPdu;` 只赋值 `id`/`length`/`data` 三个字段），垃圾值可能导致标准帧被当成扩展帧发出，对方完全收不到。这个 Bug 我们实际在 CanIf 层踩过——CanIf_Transmit 中构造 `Can_PduType` 时漏了这两个字段。根因是 MCAL 层的类型设计（栈上不初始化则字段不确定），所以此处重点标注。CanIf 层的修复方法见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md) §5.2。
 
 ### 3.2 Can_HardwareObject — Mailbox 定义
 
@@ -175,9 +180,117 @@ typedef enum {
 
 ---
 
-## 4. 核心 API
+## 4. AUTOSAR 定义的两种收发方式
 
-### 4.1 Can_Init — 对标 AUTOSAR SWS_Can_00013
+AUTOSAR SWS_Can 规范定义了 CAN 驱动的两种运行模式，区别在于**谁来触发收发动作**：
+
+### 4.1 轮询模式（Polling）— 当前使用
+
+```
+main() 循环:
+  │
+  ├── Can_Write(0, MB0, &tx)     ← 主动调用，立即提交到硬件
+  │
+  ├── Can_Read(0, MB1, &rx)      ← 主动调用，当场检查"有没有新帧？"
+  │     有 → 返回数据
+  │     无 → 返回 STATUS_ERROR
+  │
+  └── delay_ms(500)
+```
+
+**特点**：CPU 自己周期性地去"敲门问有没有新数据"。简单直接，但有两个问题：
+
+1. **CPU 空转**：两帧之间 CPU 在 delay 中什么也不干
+2. **丢帧风险**：如果一帧到达后、下次 `Can_Read` 前又有新帧覆盖了 MB，第一帧就丢了
+
+### 4.2 中断模式（Interrupt）— AUTOSAR 推荐
+
+```
+硬件中断触发:
+  CAN 帧到达 MB → 硬件触发 CAN0_ORed_0_15_MB_IRQHandler
+    │
+    ├── FLEXCAN_IRQHandler(0)     ← NXP SDK ISR，扫描所有 MB
+    │      │
+    │      └── 回调: Can_IrqCallback(RX_COMPLETE, mb_idx)
+    │             │
+    │             ├── Can_Read(0, mb_idx, &rx)   ← 在 ISR 中读数据
+    │             └── CanIf_RxIndication(&rx)     ← 通知上层
+    │
+    └── 重新武装 RX MB（准备收下一帧）
+
+main() 循环:
+  │
+  ├── Can_Write(0, MB0, &tx)     ← TX 不变（本来异步）
+  │
+  └── Can_MainFunctionRead()     ← AUTOSAR 要求周期性调，处理 ISR 缓冲的数据
+```
+
+**特点**：
+
+1. **零延迟响应**：帧到达后硬件立即触发 ISR，不依赖 CPU 轮询间隔
+2. **不丢帧**：ISR 第一时间读出数据，MB 立即重新武装
+3. **AUTOSAR 标准模式**：规范要求 `Can_MainFunctionRead/Write` 作为周期任务运行
+
+### 4.3 两种模式对比
+
+| | 轮询 | 中断 |
+|--|------|------|
+| 触发方式 | CPU 周期性检查 | 硬件自动触发 ISR |
+| CPU 效率 | 低（空转等待） | 高（ISR 只在有数据时运行） |
+| 实时性 | 取决于轮询间隔 | 微秒级响应 |
+| 丢帧风险 | 有（两帧间隔 < 轮询间隔） | 极低（ISR 及时读出） |
+| AUTOSAR 规范 | 允许，但不推荐 | 推荐（SWS_Can_00047/00048） |
+| 实现复杂度 | 简单 | 需要安装回调 + 武装 MB + ISR 安全 |
+| 本项目状态 | ✅ 已实现（main.c while 循环） | ⬜ 方案已定（见 [中断模式迁移方案](./中断模式迁移方案.md)） |
+
+### 4.4 AUTOSAR 的中断模式 API
+
+规范定义了三个用于中断模式的函数（本项目待实现）：
+
+```c
+// SWS_Can_00047: 周期调用，处理 TX 完成确认
+void Can_MainFunctionWrite(void);
+
+// SWS_Can_00048: 周期调用，处理 ISR 缓冲的 RX 数据
+void Can_MainFunctionRead(void);
+
+// SWS_Can_00046: 启用/禁用特定 MB 的中断（AUTOSAR 标准 API）
+void Can_EnableCanInterrupts(uint8_t Controller, uint8_t Hoh);
+
+// 注意：本项目计划用 Can_EnableInterrupts() 封装上述标准 API，
+// 内部调用 CAN_InstallEventCallback + 武装 RX MB。详见中断迁移方案。
+```
+```
+
+**AUTOSAR 典型中断收发流程**：
+
+```
+初始化:
+  Can_Init() → Can_SetControllerMode(STARTED) → Can_EnableInterrupts()
+  → 安装回调 → 武装 RX MB → 使能 NVIC
+
+运行时:
+  ┌─ ISR 上下文 ─────────────────────────────┐
+  │ 帧到达 → FLEXCAN_IRQHandler → 回调        │
+  │   → 读 MB 数据 → 存到软件 FIFO            │
+  │   → CanIf_RxIndication(PDU_ID, &data)     │
+  │   → 重新武装 MB                            │
+  └──────────────────────────────────────────┘
+
+  ┌─ main() 循环 ────────────────────────────┐
+  │ Can_MainFunctionRead()  ← 处理软件 FIFO   │
+  │ Can_MainFunctionWrite() ← 处理 TX 确认    │
+  │ ... 业务逻辑 ...                           │
+  └──────────────────────────────────────────┘
+```
+
+> **当前状态**：本项目第 4.2/4.3 节的 `Can_Write`/`Can_Read` 是**轮询模式**的实现。中断模式的详细迁移方案见 [中断模式迁移方案](./中断模式迁移方案.md)。
+
+---
+
+## 5. 核心 API
+
+### 5.1 Can_Init — 对标 AUTOSAR SWS_Can_00013
 
 ```c
 status_t Can_Init(const Can_ConfigType *ConfigPtr);
@@ -252,7 +365,7 @@ Can_SetControllerMode(0, CAN_CS_STARTED);  // 启动收发
 
 ---
 
-### 4.2 Can_Write — 对标 AUTOSAR SWS_Can_00015
+### 5.2 Can_Write — 对标 AUTOSAR SWS_Can_00015
 
 ```c
 status_t Can_Write(uint8_t Controller, uint8_t Hth, const Can_PduType *PduInfo);
@@ -320,7 +433,7 @@ if (ret != STATUS_SUCCESS) {
 
 ---
 
-### 4.3 Can_Read — 对标 AUTOSAR SWS_Can_00016
+### 5.3 Can_Read — 对标 AUTOSAR SWS_Can_00016
 
 ```c
 status_t Can_Read(uint8_t Controller, uint8_t Hrh, Can_PduType *PduInfo);
@@ -374,7 +487,7 @@ if (Can_Read(0, 1, &rx) == STATUS_SUCCESS) {
 
 ---
 
-### 4.4 Can_SetControllerMode — 对标 AUTOSAR SWS_Can_00019
+### 5.4 Can_SetControllerMode — 对标 AUTOSAR SWS_Can_00019
 
 ```c
 void Can_SetControllerMode(Can_ControllerType Controller,
@@ -393,7 +506,7 @@ Can_DeInit() → UNINIT
 
 ---
 
-### 4.5 Can_DeInit — 对标 AUTOSAR SWS_Can_00014
+### 5.5 Can_DeInit — 对标 AUTOSAR SWS_Can_00014
 
 ```c
 void Can_DeInit(void);
@@ -405,7 +518,7 @@ void Can_DeInit(void);
 
 ---
 
-## 5. 完整使用示例
+## 6. 完整使用示例
 
 以下是从启动到收发一帧的完整代码：
 
@@ -456,7 +569,7 @@ void can_demo(void) {
 
 ---
 
-## 6. 位时序：波特率怎么算
+## 7. 位时序：波特率怎么算
 
 CAN 波特率 = 时钟源频率 / (pre_divider + 1) / (1 + prop_seg + phase_seg1 + phase_seg2)
 
@@ -476,9 +589,9 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 
 ---
 
-## 7. 常见问题与调试
+## 8. 常见问题与调试
 
-### 7.1 Can_Write 返回 STATUS_ERROR
+### 8.1 Can_Write 返回 STATUS_ERROR
 
 | 可能原因 | 排查方法 |
 |----------|---------|
@@ -486,7 +599,7 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 | `Hth` 超出 TX MB 范围 | 确认 `Hth < num_tx_mailboxes` |
 | `PduInfo->length > 8` | CAN 经典帧最大 8 字节 |
 
-### 7.2 接收不到数据
+### 8.2 接收不到数据
 
 | 可能原因 | 排查方法 |
 |----------|---------|
@@ -495,13 +608,13 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 | CAN 总线物理断开 | 检查 CAN_H/CAN_L 接线和 120Ω 终端电阻 |
 | 波特率不匹配 | 双方波特率必须一致（允许约 ±3% 偏差） |
 
-### 7.3 Can_Write 第一次成功，第二次失败
+### 8.3 Can_Write 第一次成功，第二次失败
 
 这就是第 4.2 节说的 **TX MB 重配问题**——确认 `Can_Write()` 内部是否每次都调了 `CAN_ConfigTxBuff()`。
 
 ---
 
-## 8. 文件清单
+## 9. 文件清单
 
 | 文件 | 说明 |
 |------|------|
@@ -512,7 +625,7 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 
 ---
 
-## 9. 与上层的关系
+## 10. 与上层的关系
 
 本文档是 MCAL 层的终点。向上连接：
 

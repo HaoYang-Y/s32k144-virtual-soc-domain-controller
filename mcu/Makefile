@@ -124,10 +124,10 @@ SRCS_USER  += EcuAbstraction/CanIf/config/CanIf_Cfg.c
 #SRCS_USER  += EcuAbstraction/SpiIf/src/SpiIf.c
 
 # Services 层骨架源文件 (待实现)
+SRCS_USER  += Services/EcuM/src/EcuM.c
 #SRCS_USER  += Services/Com/src/Com.c
 #SRCS_USER  += Services/PduR/src/PduR.c
 #SRCS_USER  += Services/CanTp/src/CanTp.c
-#SRCS_USER  += Services/EcuM/src/EcuM.c
 #SRCS_USER  += Services/BswM/src/BswM.c
 
 # RTE 骨架源文件 (待实现)
