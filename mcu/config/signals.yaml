@@ -1,0 +1,86 @@
+# signals.yaml — 信号矩阵定义（单一数据源）
+#
+# 设计原则：
+#   - 全量字段一次定义，后续 AUTOSAR 层（Com/RTE）增量使用
+#   - 每加一层，生成脚本就多消费一部分字段
+#   - 不要手改生成产物（CanIf_Cfg.c / CanIf_PduId.h 等）— 改这个文件后重新运行生成脚本
+#
+# 字段说明：
+#   can_id        — CAN 报文 ID（CanIf 层用）
+#   direction     — tx / rx（CanIf 层据此分配 PDU 方向）
+#   start_bit     — 信号在帧内的起始位（Com 层用）
+#   length        — 信号位宽（Com 层用）
+#   byte_order    — intel(LSB first) / motorola(MSB first)（Com 层用）
+#   is_signed     — 是否有符号（Com 层用）
+#   scale         — 物理值 = raw * num / den + offset（RTE 层用）
+#   offset        — 偏移量（RTE 层用）
+#   unit          — 物理单位（RTE 类型定义 + SoC / 文档用）
+#   cycle_time_ms — 发送周期，0=事件触发（Com IPDU 层用）
+#   target_channel — SPI 转发通道，0=不转发（PduR 层用，阶段 3 启用）
+
+signals:
+  # ============================================================
+  # TX 信号 — MCU → CAN 总线
+  # ============================================================
+  - name: TestTxCounter
+    can_id: 0x123
+    direction: tx
+    start_bit: 0
+    length: 32
+    byte_order: intel
+    is_signed: false
+    scale:
+      num: 1
+      den: 1
+    offset: 0
+    unit: raw
+    cycle_time_ms: 500
+    target_channel: 0
+
+  - name: TestTxMagic0
+    can_id: 0x123
+    direction: tx
+    start_bit: 32
+    length: 8
+    byte_order: intel
+    is_signed: false
+    scale:
+      num: 1
+      den: 1
+    offset: 0
+    unit: raw
+    cycle_time_ms: 500
+    target_channel: 0
+
+  - name: TestTxMagic1
+    can_id: 0x123
+    direction: tx
+    start_bit: 40
+    length: 8
+    byte_order: intel
+    is_signed: false
+    scale:
+      num: 1
+      den: 1
+    offset: 0
+    unit: raw
+    cycle_time_ms: 500
+    target_channel: 0
+
+  # ============================================================
+  # RX 信号 — CAN 总线 → MCU
+  # ============================================================
+  - name: TestRxData
+    can_id: 0x100
+    direction: rx
+    start_bit: 0
+    length: 64
+    byte_order: intel
+    is_signed: false
+    scale:
+      num: 1
+      den: 1
+    offset: 0
+    unit: raw
+    cycle_time_ms: 0
+    target_channel: 0

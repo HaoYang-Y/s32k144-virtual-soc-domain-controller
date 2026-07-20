@@ -2,7 +2,7 @@
 
 > 面向初学者的 CAN 2.0B 标准帧协议基础知识。理解这些概念是学习 AUTOSAR CP CAN
 > 通信栈和使用 `mcu/MCAL/Can` 驱动的前提。建议按顺序阅读，学完后进入
-> [AUTOSAR CP CAN 通信栈](./AUTOSAR_CP_CAN通信栈.md)。
+> [AUTOSAR CP CAN 通信栈](../CAN_AUTOSAR/1_AUTOSAR_CP_CAN通信栈.md)。
 
 ---
 
@@ -323,9 +323,9 @@ CAN FD 协议               ←── 进阶：更大带宽、更长数据场
 
 | 文档 | 说明 |
 |------|------|
-| [AUTOSAR CP CAN 通信栈](./AUTOSAR_CP_CAN通信栈.md) | 逐层讲解 Com/PduR/CanTp/CanIf/Can 架构与 API |
-| [S32K144 CAN 实战手册](./S32K144_CAN实战手册.md) | 硬件连接、代码集成、调试技巧、常见故障排查 |
-| [CAN FD 协议](./CAN_FD协议.md) | 从经典 CAN 到 CAN FD 的演进 |
+| [AUTOSAR CP CAN 通信栈](../CAN_AUTOSAR/1_AUTOSAR_CP_CAN通信栈.md) | 逐层讲解 Com/PduR/CanTp/CanIf/Can 架构与 API |
+| [S32K144 CAN 实战手册](./3_S32K144_CAN实战手册.md) | 硬件连接、代码集成、调试技巧、常见故障排查 |
+| [CAN FD 协议](./2_CAN_FD协议.md) | 从经典 CAN 到 CAN FD 的演进 |
 
 ---
 

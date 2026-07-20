@@ -1,6 +1,6 @@
 # CAN FD 协议
 
-> 进阶内容。建议先掌握 [标准CAN协议入门](./标准CAN协议入门.md)，再阅读本文。
+> 进阶内容。建议先掌握 [标准CAN协议入门](./1_标准CAN协议入门.md)，再阅读本文。
 > CAN FD (Flexible Data-rate) 是 CAN 2.0B 的演进版本，在保持兼容性的前提下
 > 大幅提升了带宽和有效载荷。
 
@@ -169,9 +169,9 @@ pal->payloadSize = CAN_PAYLOAD_SIZE_8;   // 最大 8 字节
 
 | 文档 | 说明 |
 |------|------|
-| [标准CAN协议入门](./标准CAN协议入门.md) | 学习 CAN FD 之前应先掌握的标准 CAN 基础知识 |
-| [AUTOSAR CP CAN 通信栈](./AUTOSAR_CP_CAN通信栈.md) | AUTOSAR CP 分层架构，CanTp 多帧分包机制 |
-| [S32K144 CAN 实战手册](./S32K144_CAN实战手册.md) | 硬件接线、编译烧录、CAN FD 的启用代码示例 |
+| [标准CAN协议入门](./1_标准CAN协议入门.md) | 学习 CAN FD 之前应先掌握的标准 CAN 基础知识 |
+| [AUTOSAR CP CAN 通信栈](../CAN_AUTOSAR/1_AUTOSAR_CP_CAN通信栈.md) | AUTOSAR CP 分层架构，CanTp 多帧分包机制 |
+| [S32K144 CAN 实战手册](./3_S32K144_CAN实战手册.md) | 硬件接线、编译烧录、CAN FD 的启用代码示例 |
 
 ---
 

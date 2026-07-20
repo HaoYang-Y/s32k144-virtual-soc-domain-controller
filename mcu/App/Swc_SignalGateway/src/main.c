@@ -1,10 +1,22 @@
 /**
- * CAN 测试 — 使用 AUTOSAR MCAL Can 接口（底层封装 CAN PAL）
+ * CAN 测试 — 使用 AUTOSAR CanIf 接口（ECU Abstraction 层）
+ *
+ * 分层调用链:
+ *   TX: main → CanIf_Transmit() → Can_Write() → 硬件
+ *   RX: main → Can_Read() → CanIf_RxIndication()          ← CanIf 层就位
+ *
+ * 后续步骤:
+ *   Step 2: main → PduR → CanIf → Can                     ← PduR 就位
+ *   Step 3: main → Com → PduR → CanIf → Can               ← Com 就位
+ *   Step 4: main → RTE → Com → PduR → CanIf → Can         ← 完整五层
+ *
  * PTD0=橙(TX) PTD1=红(错误) PTD15=绿(心跳) PTD16=蓝(RX)
  */
 #include "Port.h"
 #include "clock_config.h"
 #include "Can.h"
+#include "CanIf.h"
+#include "CanIf_PduId.h"
 #include "pins_driver.h"
 #include <stdint.h>
 
@@ -32,30 +44,67 @@ int main(void)
     Port_Init();
     PINS_DRV_SetPins(PTD, (1u<<0)|(1u<<1)|(1u<<15)|(1u<<16));
 
+    /* --- 硬件层初始化 (MCAL Can) --- */
     if(Can_Init(&can0_cfg)!=STATUS_SUCCESS){
         PINS_DRV_ClearPins(PTD, 1u<<1); /* 红=失败 */
         for(;;){}
     }
     Can_SetControllerMode(0, CAN_CS_STARTED);
 
+    /* --- CanIf 层初始化 (ECU Abstraction) --- */
+    CanIf_Init();
+
     for(;;)
     {
-        Can_PduType tx={.id=0x123UL,.length=8U};
-        tx.data[0]=cnt&0xFF; tx.data[1]=(cnt>>8)&0xFF;
-        tx.data[2]=0xAA; tx.data[3]=0x55; tx.data[4]=0xAA; tx.data[5]=0x55;
-        tx.data[6]=(cnt>>16)&0xFF; tx.data[7]=(cnt>>24)&0xFF;
+        /* ================================================================
+         * TX 路径: main → CanIf_Transmit() → Can_Write() → 硬件
+         * ================================================================ */
+        {
+            uint8_t txData[8];
+            txData[0]=cnt&0xFF;
+            txData[1]=(cnt>>8)&0xFF;
+            txData[2]=0xAA;
+            txData[3]=0x55;
+            txData[4]=0xAA;
+            txData[5]=0x55;
+            txData[6]=(cnt>>16)&0xFF;
+            txData[7]=(cnt>>24)&0xFF;
 
-        PINS_DRV_ClearPins(PTD, 1u<<0);
-        status_t s=Can_Write(0,TX_MB,&tx);
-        PINS_DRV_SetPins(PTD, 1u<<0);
+            CanIf_PduType txPdu = {
+                .id     = CANIF_PDU_ID_TX_0x123,
+                .length = 8U,
+                .data   = txData
+            };
 
-        PINS_DRV_TogglePins(PTD, 1u<<15);           /* 绿心跳 */
-        if(s!=0) PINS_DRV_ClearPins(PTD, 1u<<1);   /* 红=TX失败 */
-        else     PINS_DRV_SetPins(PTD, 1u<<1);
+            PINS_DRV_ClearPins(PTD, 1u<<0);
+            uint8_t ret = CanIf_Transmit(0, &txPdu);
+            PINS_DRV_SetPins(PTD, 1u<<0);
 
-        Can_PduType rx;
-        if(Can_Read(0,RX_MB,&rx)==STATUS_SUCCESS)
-            PINS_DRV_TogglePins(PTD, 1u<<16);       /* 蓝=RX */
+            PINS_DRV_TogglePins(PTD, 1u<<15);           /* 绿心跳 */
+            if(ret != E_OK) PINS_DRV_ClearPins(PTD, 1u<<1);   /* 红=TX失败 */
+            else            PINS_DRV_SetPins(PTD, 1u<<1);
+        }
+
+        /* ================================================================
+         * RX 路径: Can_Read() → CanIf_RxIndication()
+         * ================================================================ */
+        {
+            Can_PduType rxCanPdu;
+            if(Can_Read(0, RX_MB, &rxCanPdu)==STATUS_SUCCESS)
+            {
+                /* CAN ID → PDU ID (CanIf 层职责) */
+                CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxCanPdu.id);
+                if (pduId < CANIF_PDU_COUNT) {
+                    CanIf_PduType rxIfPdu = {
+                        .id     = pduId,
+                        .length = rxCanPdu.length,
+                        .data   = rxCanPdu.data
+                    };
+                    CanIf_RxIndication(0, &rxIfPdu);
+                }
+                PINS_DRV_TogglePins(PTD, 1u<<16);       /* 蓝=RX */
+            }
+        }
 
         cnt++; delay_ms(500);
     }

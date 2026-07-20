@@ -60,4 +60,11 @@ uint8_t CanIf_Transmit(CanIf_ControllerType Controller, CanIf_PduType *PduPtr);
  */
 void CanIf_Init(void);
 
+/**
+ * @brief 按 CAN ID 查找 PDU ID（RX 路径：CAN 帧 ID → PDU ID）
+ * @param CanId  CAN 报文 ID
+ * @return      匹配的 PDU ID，未找到返回 CANIF_PDU_COUNT
+ */
+CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
+
 #endif /* CANIF_H */

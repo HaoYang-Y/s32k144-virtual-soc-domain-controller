@@ -115,6 +115,7 @@ SRCS_USER  += Services/Log/src/Log.c
 
 # ECU Abstraction 层
 SRCS_USER  += EcuAbstraction/CanIf/src/CanIf.c
+SRCS_USER  += EcuAbstraction/CanIf/config/CanIf_Cfg.c
 
 # MCAL 骨架源文件 (待实现)
 #SRCS_USER  += MCAL/Spi/src/Spi.c

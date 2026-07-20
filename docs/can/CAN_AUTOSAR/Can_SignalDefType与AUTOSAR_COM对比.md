@@ -1,7 +1,9 @@
 # Can_SignalDefType 与 AUTOSAR COM 标准对比
 
-> 对比当前自定义 `Can_SignalDefType` 与 AUTOSAR COM 的 ComSignal / ComIPdu 模型，
-> 给出从"扁平 DBC 等价物"到"分层 AUTOSAR COM"的迁移路线。
+> **定位**：过渡期参考文档。随 AUTOSAR 各层逐步实现，本文档中的计划内容会逐步落地为独立文档（如 [2_MCAL_Can驱动详解](./2_MCAL_Can驱动详解.md)、[3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md) 等）。全部实现后本文档可归档。
+
+> 对比当前自定义 `Can_SignalDefType` 与 AUTOSAR SWC→RTE→Com→PduR→CanIf→Can 五层模型，
+> 给出从"扁平 DBC 等价物"到"分层 AUTOSAR 架构"的迁移路线。
 
 ---
 
@@ -76,22 +78,30 @@ typedef struct {
 
 AUTOSAR COM 的核心洞察是：**应用层关心的是"车速"这个信号，不关心它装在哪个 CAN ID 的第几个 bit**。
 
-所以 COM 标准把这个映射拆成了**四层**，每一层只做一件事：
+所以 AUTOSAR 把这个映射拆成了**五层**，每一层只做一件事：
 
 ```
 ┌───────────────────────────────────────────────────────────┐
 │  应用层 (SWC)                                              │
-│  Rte_Read_VehicleSpeed() → 拿到 "120.5 km/h"              │
-│  SWC 只看到命名物理值，不知道 CAN、不知道 bit 位置           │
+│  speed = Rte_Read_VehicleSpeed();                          │
+│  if (speed > 100) brake();  // SWC 用强类型物理值写逻辑     │
+│  SWC 只看到命名物理值 + 类型，不知道 CAN、不知道 bit 位置     │
 ├───────────────────────────────────────────────────────────┤
-│  信号层 (Com)              ┌─────────────────────────┐    │
-│  Com_ReceiveSignal(        │ Com_SignalConfigType    │    │
-│    SIGNAL_ID_VEHICLE_SPEED) │ .signal_id = 0x0001    │    │
+│  运行时环境 (RTE)           ┌─────────────────────────┐    │
+│  Rte_Read_VehicleSpeed()    │ RTE 的职责:              │    │
+│  → 调 Com_ReceiveSignal()   │ · SWC端口 ↔ Com信号映射  │    │
+│  → raw * factor + offset    │ · 物理值转换(scale/offset)│    │
+│  → 返回 uint16_t km/h       │ · 强类型包装             │    │
+│                              └─────────────────────────┘    │
+├───────────────────────────────────────────────────────────┤
+│  信号层 (Com)               ┌─────────────────────────┐    │
+│  Com_ReceiveSignal(         │ Com_SignalConfigType    │    │
+│    COM_SIGNAL_ID_XXX)       │ .signal_id = 0x0001    │    │
 │  → 从 I-PDU 中提取 bit 0~7  │ .ipdu_id   = 3         │    │
-│                             │ .bit_position = 0      │    │
-│                             │ .bit_size    = 8       │    │
-│                             │ .byte_order  = Intel   │    │
-│                             └─────────────────────────┘    │
+│  → 返回 raw = 0x0011        │ .bit_position = 0      │    │
+│  Com 只管 bit 拆装，不管物理值│ .bit_size    = 8       │    │
+│                              │ .byte_order  = Intel   │    │
+│                              └─────────────────────────┘    │
 ├───────────────────────────────────────────────────────────┤
 │  PDU 层 (Com)               ┌─────────────────────────┐    │
 │  Com_IPduGroupStart(3)      │ Com_IPduConfigType      │    │
@@ -113,16 +123,21 @@ AUTOSAR COM 的核心洞察是：**应用层关心的是"车速"这个信号，�
 └───────────────────────────────────────────────────────────┘
 ```
 
+> **关键**：SWC 永远不直接调 `Com_ReceiveSignal()`，RTE 永远是中间人。
+
 ### 2.2 各层类型的职责单一化
 
 | 层 | 类型 | 职责 | 只关心 |
 |----|------|------|--------|
+| RTE (运行时环境) | —（代码生成） | SWC 端口 ↔ Com 信号映射，物理值转换，强类型包装 | `port_name`, `signal_id`, `scale`, `offset`, `unit` |
 | Com (信号) | `Com_SignalConfigType` | 信号 ↔ I-PDU 的 bit 级拆装 | `signal_id`, `bit_position`, `bit_size` |
 | Com (PDU) | `Com_IPduConfigType` | I-PDU ↔ CAN ID 的映射 | `ipdu_id`, `can_id`, `dlc`, `cycle_time` |
 | PduR (路由) | `PduR_RouteConfigType` | PDU 在模块间路由 | `src_pdu_id`, `dst_pdu_id`, `src_module`, `dst_module` |
 | CanIf (接口) | `CanIf_PduConfigType` | PDU ↔ 硬件实例映射 | `pdu_id`, `controller_id`, `can_id`, `dlc` |
 
-**关键差异**：AUTOSAR 把 `Can_SignalDefType` 的 9 个字段拆分到了 4 个独立的配置表中，每个表只关注自己的抽象层级。
+> **RTE 是 SWC 和 Com 之间的胶水层**。SWC 调 `Rte_Read_VehicleSpeed()`，RTE 内部调 `Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED, &raw)`，再做 `raw * factor + offset` 得到物理值，返回给 SWC。SWC 永远不直接碰 Com API。
+
+**关键差异**：AUTOSAR 把 `Can_SignalDefType` 的 9 个字段拆分到了 5 个独立的层级中，每层只关注自己的抽象层级。
 
 ---
 
@@ -138,9 +153,9 @@ AUTOSAR COM 的核心洞察是：**应用层关心的是"车速"这个信号，�
 | `start_bit` | Com | `Com_SignalConfigType.bit_position` | **已有** ✅ | 信号在 I-PDU 载荷中的起始位 |
 | `length` | Com | `Com_SignalConfigType.bit_size` | **已有** ✅ | 信号的位宽 |
 | `is_big_endian` | Com | `Com_SignalConfigType` — 需新增字段 | **缺失** ⚠️ | 现有的 `Com_SignalConfigType` 没有字节序字段，只有 `is_signed` |
-| `scale_num` | Com 或 SWC | — | **缺失** ⚠️ | AUTOSAR COM 标准本身不做物理值转换（它是信号拆装层，不是换算层） |
-| `scale_den` | Com 或 SWC | — | **缺失** ⚠️ | 同上，物理转换可放 Com 的扩展字段，或放在上层 RTE / SWC |
-| `offset` | Com 或 SWC | — | **缺失** ⚠️ | 同上 |
+| `scale_num` | RTE | — | **缺失** ⚠️ | RTE 负责物理值转换：`physical = raw * scale_num / scale_den + offset`。Com 层只返回 raw 值，不管物理意义 |
+| `scale_den` | RTE | — | **缺失** ⚠️ | 同上——Com 是信号拆装层，物理换算属于 RTE 的职责 |
+| `offset` | RTE | — | **缺失** ⚠️ | 同上 |
 | `target_channel` | PduR | `PduR_RouteConfigType`（`src_module` / `dst_module`） | **已有** ✅ | PduR 的路由表就是做这个的：把 PDU 从 CanIf 路由到 SpiIf 或其他模块 |
 | （信号名称） | COM_SIGNAL_ID | `Com_SignalConfigType.signal_id` + 宏/枚举 | **已有** ✅ | 通过 `Com_SignalIdType` + signal_id 实现信号命名 |
 
@@ -158,14 +173,9 @@ typedef struct {
     uint8_t  is_big_endian;  // ⚠️ 缺失：Intel(LSB first) / Motorola(MSB first)
 } Com_SignalConfigType;
 
-// 物理值转换可以另建一个类型，不混入信号拆装层：
-typedef struct {
-    uint16_t signal_id;
-    uint16_t scale_num;      // 物理值 = raw * scale_num / scale_den + offset
-    uint16_t scale_den;
-    int16_t  offset;
-    char     unit[8];        // 如 "km/h"
-} Com_SignalPhysicalType;    // 可选：放在 Com 层或 RTE/SWC 层
+// 物理值转换不放在 Com 层，放在 RTE 层：
+// RTE 从 YAML/DBC 读取 scale/offset，生成每个信号的 Rte_Read_xxx() 函数，
+// 函数内部调 Com_ReceiveSignal() 拿 raw 值，再做物理转换
 ```
 
 ---
@@ -260,12 +270,12 @@ const Can_SignalDefType Can_SignalMap[] = {
 const uint8_t Can_SignalMap_Count = 2;
 ```
 
-SoC 侧加载同一份 YAML，但**只关心物理层信息**：
+SoC 侧加载同一份 YAML，但**只关心物理层信息**（因为 MCU 的 RTE 层已经完成了 raw→physical 转换）：
 
 ```cpp
 // SoC 加载后：
 // can_id / start_bit / byte_order — 直接丢弃，SoC 不需要
-// name / unit / scale / offset   — 用来生成 CanSignalDef
+// name / unit / scale / offset   — 用来生成 CanSignalDef（纯物理描述）
 ```
 
 ### 4.2 阶段 2：启用 Com + CanIf — 废弃 Can_SignalDefType
@@ -299,19 +309,26 @@ CanIf_RxIndication() → PduR
 Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED)
   │ 查 Com_SignalConfig[0]: ipdu_id=3, bit_position=0, bit_size=8
   │ 从 I-PDU 3 的 data[] 中提取 bit 0~7 → raw=0x11
-  │ 查 Com_SignalPhysical[0]: raw*1/1+0 → 物理值=17
+  │ Com 只返回 raw 值，不做物理转换
   ▼
-Rte_Read_VehicleSpeed() → "VehicleSpeed = 17 km/h"
+Rte_Read_VehicleSpeed()          ← RTE 层
+  │ 调 Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED, &raw)
+  │ 查信号表: scale=1/1, offset=0 → physical = 17
+  │ 返回 Rte_VehicleSpeedType (uint16_t, 单位 km/h)
+  ▼
+SWC: speed = Rte_Read_VehicleSpeed();
+     if (speed > 100) { brake(); }
 ```
 
 关键区别：
 
-| | 阶段 1 (Can_SignalDefType) | 阶段 2 (AUTOSAR Com) |
+| | 阶段 1 (Can_SignalDefType) | 阶段 2 (AUTOSAR Com + RTE) |
 |---|---|---|
 | 信号命名 | ❌ 靠数组索引 | ✅ `COM_SIGNAL_ID_VEHICLE_SPEED` 宏 |
 | 信号拆装 | 手写代码循环查表 | `Com_ReceiveSignal()` 标准 API |
 | I-PDU 概念 | ❌ 无 | ✅ 信号打包成 I-PDU → 统一收发 |
-| 物理转换 | 耦合在 struct 里 | 独立 `Com_SignalPhysicalType` 表 |
+| 物理转换 | 耦合在 struct 里 | RTE 层 `Rte_Read_xxx()` 函数负责 |
+| SWC 接口 | 无类型，裸 bytes | ✅ 强类型 `Rte_VehicleSpeedType` |
 | 配置来源 | 手写 C 数组 | YAML → Python 自动生成 |
 
 ### 4.3 阶段 3：PduR 路由层完整启用
@@ -330,13 +347,15 @@ signals.yaml 中新增 route 字段:
   {.src_pdu_id=3, .dst_pdu_id=3, .src_module=MOD_CANIF, .dst_module=MOD_SPIIF}
 ```
 
-数据流变成完全标准化的 AUTOSAR 路径：
+数据流变成完全标准化的 AUTOSAR 五层路径：
 
 ```
 CAN 帧
-  → Can_Read()
-  → CanIf_RxIndication()
-  → PduR_CanIfRxIndication()  查 PduR_RouteConfig → dst_module=SPIIF
+  → Can_Read()                                   ← MCAL 硬件层
+  → CanIf_RxIndication()                         ← ECU 抽象层
+  → PduR_CanIfRxIndication()  查 PduR_RouteConfig → dst_module=SPIIF  ← 路由层
+  → Com_ReceiveSignal()       从 I-PDU 拆出 raw 值                     ← 信号层
+  → Rte_Read_VehicleSpeed()   raw → physical (scale/offset)            ← RTE 层
   → SpiIf 发送给 SoC
   → SoC 收到: "VehicleSpeed = 17 km/h" （物理值，不含任何 CAN 信息）
 ```
@@ -353,11 +372,14 @@ Can_SignalDefType[]                Com_SignalConfig[]             Com_SignalConf
 (扁平数组, 不改代码)               Com_IPduConfig[]               Com_IPduConfig[]
                                    CanIf_PduConfig[]              CanIf_PduConfig[]
                                    Com_SignalId.h                 PduR_RouteConfig[]
-                                                                  Com_SignalId.h
-                                                                  Com_SignalPhysical[]
+                                   Rte_SignalAccess.c              Com_SignalId.h
+                                   Rte_Type.h                      Rte_SignalAccess.c
+                                                                   Rte_Type.h
 
-Can_Read() + 手写循环查表           Com_ReceiveSignal()            同阶段2 + PduR 自动路由
-                                   Com_SendSignal()
+Can_Read() + 手写循环查表           Rte_Read_VehicleSpeed()        同阶段2 + PduR 自动路由
+                                     → Com_ReceiveSignal()
+                                   Rte_Write_VehicleSpeed()
+                                     → Com_SendSignal()
 ```
 
 ---
@@ -393,19 +415,25 @@ Can_Read() + 手写循环查表           Com_ReceiveSignal()            同阶�
          └──────────┘   └──────────┘   └──────────┘
                │               │               │
                ▼               ▼               ▼
-    can_id/start_bit/   name/unit/         可读的信号清单
-    length/byte_order   scale/offset
-    scale/offset/cycle  （丢弃 CAN 字段）
+    全部字段:          name/unit/         可读的信号清单
+    can_id/start_bit/  scale/offset
+    length/byte_order  （丢弃 CAN 字段）
+    scale/offset/cycle
 
-    生成:               加载为:
-    Com_SignalConfig[]  CanSignalDef[]
-    Com_IPduConfig[]    （仅物理层）
+    生成:
+    Com_SignalConfig[]   加载为:
+    Com_IPduConfig[]     CanSignalDef[]
+    CanIf_PduConfig[]    （仅物理层）
+    Rte_SignalAccess.c   ← RTE 层：Rte_Read_xxx() 函数（含物理转换）
+    Rte_Type.h           ← RTE 层：强类型定义
 ```
 
 **核心原则**：
 - YAML 包含**完整的**信号描述（CAN 层 + 物理层）
-- MCU 侧代码生成器**使用全部字段**做信号拆装
-- SoC 侧加载器**只取 name/unit/scale/offset**——因为 SoC 收到的已经是 MCU 解析好的物理值
+- MCU 侧代码生成器**使用全部字段**：
+  - CAN 层字段 → 生成 `Com_SignalConfig[]` + `Com_IPduConfig[]` + `CanIf_PduConfig[]`（Com/CanIf 配置表）
+  - 物理层字段 → 生成 `Rte_Read_xxx()` / `Rte_Write_xxx()` 函数（含 scale/offset 转换）
+- SoC 侧加载器**只取 name/unit/scale/offset**——因为 SoC 收到的已经是 MCU RTE 层解析好的物理值
 - SoC 永远不需要知道 `can_id`、`start_bit`、`byte_order`
 
 ### 5.3 完整的 YAML 字段定义
@@ -423,7 +451,7 @@ signals:
       num: int
       den: int               # 分母=1 表示 num/1
     offset: int              # 偏移量
-    unit: string             # 单位（仅 SoC / 文档需要）
+    unit: string             # 单位（RTE 类型定义 + SoC / 文档需要）
     cycle_time_ms: int       # 发送周期（仅 MCU TX 需要，0=事件触发）
     route:                   # 路由目标（阶段 3 启用）
       src: can|spi|lin
@@ -469,11 +497,21 @@ def generate(signals_yaml_path, output_dir):
         })
         signal_id += 1
 
-    # 2. 生成 Com_Cfg.c 中的数组定义
+    # 2. 生成 Com_Cfg.c, CanIf_Cfg.c, Com_SignalId.h
     write_com_signal_config(ipdus, output_dir)
     write_com_ipdu_config(ipdus, output_dir)
     write_canif_pdu_config(ipdus, output_dir)
     write_signal_id_macros(ipdus, output_dir)
+
+    # 3. 生成 RTE 层信号访问函数 (Rte_SignalAccess.c + Rte_Type.h)
+    #    每个信号生成一个 Rte_Read_xxx() 函数：
+    #      Rte_VehicleSpeedType Rte_Read_VehicleSpeed(void) {
+    #          uint16_t raw;
+    #          Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED, &raw);
+    #          return (Rte_VehicleSpeedType)(raw * 1 / 1 + 0);
+    #      }
+    write_rte_signal_access(ipdus, output_dir)
+    write_rte_types(ipdus, output_dir)
 ```
 
 ---
@@ -503,32 +541,72 @@ def generate(signals_yaml_path, output_dir):
 
 **问题**：SoC 收到的仍然是原始数据流，需要自己在 C++ 端再做一遍 `CanSignalDef` 解析——等于两边都做相同的事。
 
-### 6.2 改造后（AUTOSAR Com）
+### 6.2 改造后（完整 AUTOSAR 五层：Can → CanIf → PduR → Com → RTE → SWC）
 
 ```
   CAN 帧到达 (ID=0x123)
        │
        ▼
-  Can_Read() → Can_PduType
+  ┌─ Can (MCAL 硬件层) ─────────────────────────────────────┐
+  │ Can_Read() → Can_PduType {id=0x123, data[8]}            │
+  └─────────────────────────────────────────────────────────┘
        │
        ▼
-  CanIf_RxIndication() → PduR
+  ┌─ CanIf (ECU 抽象层) ────────────────────────────────────┐
+  │ CanIf_RxIndication() → 查 CanIf_PduConfig[]             │
+  │ → 找到 PduId → 转发给 PduR                              │
+  └─────────────────────────────────────────────────────────┘
        │
        ▼
-  Com_MainFunctionRx():
-    Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED)
-    Com_ReceiveSignal(COM_SIGNAL_ID_ENGINE_RPM)
-    Com_ReceiveSignal(COM_SIGNAL_ID_COOLANT_TEMP)
-       │
-       ├── "VehicleSpeed" = 17 km/h    ← 命名物理值
-       ├── "EngineRPM"    = 3200 rpm
-       └── "CoolantTemp"  = 85 degC
+  ┌─ PduR (路由层) ─────────────────────────────────────────┐
+  │ PduR_CanIfRxIndication() → 查 PduR_RouteConfig[]       │
+  │ → src=CanIf, dst=Com → 调 Com_RxIndication()            │
+  └─────────────────────────────────────────────────────────┘
        │
        ▼
-  PduR 路由 → SpiIf 发送
+  ┌─ Com (信号拆装层) ──────────────────────────────────────┐
+  │ Com_MainFunctionRx():                                   │
+  │   Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED)        │
+  │   → 查 Com_SignalConfig[sig_id]                         │
+  │   → ipdu_id=3, bit_position=0, bit_size=8               │
+  │   → 从 I-PDU data[] bit 0~7 提取 raw = 0x0011           │
+  │   Com_ReceiveSignal(COM_SIGNAL_ID_ENGINE_RPM)            │
+  │   → raw = 0x3200                                        │
+  │   Com_ReceiveSignal(COM_SIGNAL_ID_COOLANT_TEMP)          │
+  │   → raw = 0x7D                                          │
+  │                                                          │
+  │   Com 只返回 raw 值，不做物理转换！                        │
+  └─────────────────────────────────────────────────────────┘
        │
        ▼
-  SoC 收到:
+  ┌─ RTE (运行时环境) ──────────────────────────────────────┐
+  │ Rte_Read_VehicleSpeed():                                │
+  │   1. Com_ReceiveSignal(COM_SIGNAL_ID_VEHICLE_SPEED, &raw)│
+  │   2. physical = raw * 1/1 + 0 = 17                      │
+  │   3. return (Rte_VehicleSpeedType)17;  // uint16_t km/h │
+  │                                                          │
+  │ Rte_Read_EngineRPM():                                    │
+  │   1. Com_ReceiveSignal(COM_SIGNAL_ID_ENGINE_RPM, &raw)   │
+  │   2. physical = raw * 256/1024 + 0 = 3200               │
+  │   3. return (Rte_EngineRpmType)3200;  // uint16_t rpm   │
+  │                                                          │
+  │ Rte_Read_CoolantTemp():                                  │
+  │   1. Com_ReceiveSignal(COM_SIGNAL_ID_COOLANT_TEMP, &raw) │
+  │   2. physical = raw * 1/1 + (-40) = 85                  │
+  │   3. return (Rte_CoolantTempType)85;  // uint8_t degC   │
+  └─────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌─ SWC (应用层) ──────────────────────────────────────────┐
+  │ speed = Rte_Read_VehicleSpeed();   // 17 km/h           │
+  │ rpm   = Rte_Read_EngineRPM();      // 3200 rpm          │
+  │ temp  = Rte_Read_CoolantTemp();    // 85 degC           │
+  │                                                          │
+  │ if (temp > 90) { fan_on(); }  ← 强类型物理值写业务逻辑   │
+  └─────────────────────────────────────────────────────────┘
+       │
+       ▼ (PduR 路由到 SpiIf)
+  SoC 收到（JSON 格式）:
     {"VehicleSpeed": {"value": 17, "unit": "km/h"},
      "EngineRPM":    {"value": 3200, "unit": "rpm"},
      "CoolantTemp":  {"value": 85, "unit": "degC"}}
@@ -537,7 +615,9 @@ def generate(signals_yaml_path, output_dir):
 
 **改进**：
 - SoC 不再需要知道 CAN ID、start_bit、byte_order
-- 同一个 YAML 的物理层字段（name/unit/scale）直接给 SoC 用
+- RTE 层完成 raw → physical 转换（scale/offset），SWC 拿到的是可直接使用的物理值
+- Com 层只管 bit 级拆装，职责单一
+- 同一个 YAML 的物理层字段（name/unit/scale/offset）给 RTE 代码生成用
 - MCU 和 SoC 的解析逻辑不重复
 
 ---
@@ -549,21 +629,25 @@ def generate(signals_yaml_path, output_dir):
 | 文件 | 内容 |
 |------|------|
 | `mcu/Config/signals.yaml` | 信号矩阵定义（单一数据源） |
-| `mcu/Tools/generate_autosar_com_cfg.py` | 从 YAML 生成 C 配置数组 |
+| `mcu/Tools/generate_autosar_com_cfg.py` | 从 YAML 生成 C 配置数组 + RTE 函数 |
 | `mcu/Services/Com/config/Com_Cfg.c` | 自动生成的信号/IPDU 配置 |
 | `mcu/Services/Com/config/Com_SignalId.h` | 自动生成的信号 ID 宏 |
 | `mcu/EcuAbstraction/CanIf/config/CanIf_Cfg.c` | 自动生成的 CanIf PDU 配置 |
+| `mcu/RTE/Rte_SignalAccess.c` | 自动生成的 `Rte_Read_xxx` / `Rte_Write_xxx` 函数 |
 
 ### 7.2 修改文件
 
 | 文件 | 变更 |
 |------|------|
-| `mcu/Services/Com/src/Com.c` | 从骨架实现 `Com_ReceiveSignal()` / `Com_SendSignal()` |
-| `mcu/Services/Com/include/Com.h` | 扩展类型定义（加 `Com_SignalPhysicalType`） |
+| `mcu/RTE/Rte.c` | 从骨架实现 `Rte_Read_VehicleSignal()` → 内部调 `Com_ReceiveSignal()` + 物理转换 |
+| `mcu/RTE/Rte.h` | 扩展：每个信号生成独立的 `Rte_Read_xxx()` / `Rte_Write_xxx()` 函数声明 |
+| `mcu/RTE/Rte_Type.h` | 从 YAML/DBC 自动生成信号类型定义（已有骨架，需扩展） |
+| `mcu/Services/Com/src/Com.c` | 从骨架实现 `Com_ReceiveSignal()` / `Com_SendSignal()`（只做 raw 拆装） |
+| `mcu/Services/Com/include/Com.h` | 保持信号拆装接口不变（物理转换不在 Com 层） |
 | `mcu/Services/Com/config/Com_Cfg.h` | 扩展 `Com_SignalConfigType`（加 `is_big_endian`） |
 | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | 从骨架实现 `CanIf_Transmit()` / `CanIf_RxIndication()` |
 | `mcu/Services/PduR/src/PduR.c` | 从骨架实现路由逻辑（阶段 3） |
-| `mcu/App/Swc_SignalGateway/src/main.c` | 改用 `Com_ReceiveSignal()` + `Com_SendSignal()` API |
+| `mcu/App/Swc_SignalGateway/src/main.c` | 改用 `Rte_Read_xxx()` / `Rte_Write_xxx()` API（不再直接调 Com） |
 
 ### 7.3 废弃文件
 
@@ -580,25 +664,30 @@ def generate(signals_yaml_path, output_dir):
 │                     核心对比                                      │
 ├──────────────────────────────────────────────────────────────────┤
 │  Can_SignalDefType:                                               │
-│    扁平 struct — 信号描述 + CAN ID + 路由混在一起                   │
+│    扁平 struct — 信号描述 + CAN ID + 路由 + 物理转换 混在一起       │
 │    靠数组索引访问 — 没有信号名                                      │
 │    MCU 查表 → 转发 raw bytes — SoC 还要再解析一遍                  │
 │                                                                   │
-│  AUTOSAR COM:                                                     │
-│    分四层 — Com信号层 / ComPDU层 / CanIf接口层 / Can硬件层           │
-│    信号有 ID + 名称 — Com_ReceiveSignal(COM_SIGNAL_ID_XXX)          │
-│    MCU 完成全部拆装 → SoC 只收命名物理值                            │
+│  AUTOSAR 五层模型:                                                 │
+│    SWC   — 强类型物理值写业务逻辑（不知道 CAN 存在）                 │
+│    RTE   — SWC↔Com 映射 + 物理值转换(scale/offset) + 类型包装      │
+│    Com   — 信号 ↔ I-PDU bit 级拆装（只认 raw 值）                  │
+│    PduR  — PDU 跨模块路由（CanIf↔Com↔SpiIf）                       │
+│    CanIf — PDU ↔ CAN 控制器/ID 映射                               │
+│    信号有 ID + 名称 — Rte_Read_VehicleSpeed() → uint16_t km/h     │
+│    MCU 完成全部拆装+物理转换 → SoC 只收命名物理值                    │
 ├──────────────────────────────────────────────────────────────────┤
-│                     改造三步走                                     │
+│                     改造三步走（自底向上逐层实现）                       │
 │                                                                   │
-│  阶段 1: YAML → Can_SignalMap[] (零运行时改动，只改配置来源)         │
-│  阶段 2: YAML → Com_SignalConfig[] + Com_IPduConfig[] (核心)       │
-│  阶段 3: 启用 PduR 路由层 (完整 AUTOSAR 对齐)                       │
+│  阶段 1 ✅: CanIf 层就位 — YAML → CanIf_PduConfig[] 自动生成          │
+│           → 详见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md)  │
+│  阶段 2 ⬜: PduR 路由层 — PDU 在 CanIf↔Com 间自动路由                  │
+│  阶段 3 ⬜: Com 信号层 + RTE — 信号拆装 + 物理值转换 + SWC 强类型接口   │
 ├──────────────────────────────────────────────────────────────────┤
 │                     DBC 模拟                                       │
 │                                                                   │
 │  YAML 替代 DBC: 字段自由扩展、工具零依赖、一源多目标                  │
-│  MCU 用全部字段 → 生成 C 配置数组                                   │
+│  MCU 用全部字段 → 生成 C 配置数组 + RTE 函数                        │
 │  SoC 只取 name/unit/scale/offset → 不接触 CAN 层信息                │
 └──────────────────────────────────────────────────────────────────┘
 ```
