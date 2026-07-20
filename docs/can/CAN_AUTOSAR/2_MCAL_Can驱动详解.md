@@ -333,14 +333,16 @@ Can_Init(ConfigPtr)
          Can_State = CAN_CS_STOPPED  (需再调 SetControllerMode(STARTED) 才能收发)
 ```
 
-**调用示例**：
+**配置定义**（不在 main.c 中，而在专用配置文件内）：
 
 ```c
-// main.c 中的配置
+// Can_Cfg.c — CAN 驱动配置实例（供 EcuM 引用）
+#include "Can_Cfg.h"
+
 static const Can_HardwareObject tx_mb[] = {{.id = 0x123UL}};
 static const Can_HardwareObject rx_mb[] = {{.id = 0x100UL}};
 
-static const Can_ConfigType can0_cfg = {
+const Can_ConfigType Can_Config = {
     .controller       = 0,
     .max_num_mb       = 16,
     .flexcan_mode     = CAN_MODE_NORMAL,
@@ -354,13 +356,21 @@ static const Can_ConfigType can0_cfg = {
     .tx_mailboxes     = tx_mb,
     .rx_mailboxes     = rx_mb,
 };
+```
 
-// 初始化
-if (Can_Init(&can0_cfg) != STATUS_SUCCESS) {
-    // 红灯常亮，死循环
-    for (;;) {}
+**初始化**（由 EcuM 统一调度，不在 main.c 中直接调用）：
+
+```c
+// EcuM.c — EcuM_Init() 内部按 AUTOSAR 顺序调用
+if (Can_Init(&Can_Config) != STATUS_SUCCESS) {
+    return;                             // 初始化失败，进入安全状态
 }
-Can_SetControllerMode(0, CAN_CS_STARTED);  // 启动收发
+Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+```
+
+```c
+// main.c — 应用层只需调用 EcuM_Init()
+EcuM_Init();  // 内部依次初始化 MCAL → ECU Abstraction → Services → RTE
 ```
 
 ---
@@ -525,12 +535,11 @@ void Can_DeInit(void);
 ```c
 #include "Can.h"
 
-// 1. 定义 Mailbox
+// 1. 定义 Mailbox + 配置（在 Can_Cfg.c 中，不在应用层）
 static const Can_HardwareObject tx_mb[] = {{.id = 0x123UL}};
 static const Can_HardwareObject rx_mb[] = {{.id = 0x100UL}};
 
-// 2. 定义配置
-static const Can_ConfigType can0_cfg = {
+const Can_ConfigType Can_Config = {
     .controller       = 0,
     .max_num_mb       = 16,
     .flexcan_mode     = CAN_MODE_NORMAL,
@@ -542,8 +551,8 @@ static const Can_ConfigType can0_cfg = {
 };
 
 void can_demo(void) {
-    // 3. 初始化
-    Can_Init(&can0_cfg);
+    // 2. 初始化（由 EcuM 统一调度，应用层不直接调 Can_Init）
+    EcuM_Init();  // 内部: Can_Init(&Can_Config) → Can_SetControllerMode() → CanIf_Init()
 
     // 4. 启动控制器
     Can_SetControllerMode(0, CAN_CS_STARTED);
@@ -639,4 +648,4 @@ Can (本文) ──→ CanIf (3_CanIf_CAN接口层详解.md) ──→ PduR ─�
 
 - **Can_Write()** ← 当前被 `CanIf_Transmit()` 调用（[3_CanIf_CAN接口层详解.md](./3_CanIf_CAN接口层详解.md) 第 4.2 节）
 - **Can_Read()** ← 当前在 `main.c` 中轮询，结果转发给 `CanIf_RxIndication()`
-- **Can_Init()** ← 仍在 `main.c` 中直接调用（AUTOSAR 完整方案应由 EcuM 调用，待后续迁移）
+- **Can_Init()** ← 已迁移到 `EcuM_Init()` 中统一调度，配置数据在 `Can_Cfg.c` 中定义（`extern const Can_ConfigType Can_Config`）

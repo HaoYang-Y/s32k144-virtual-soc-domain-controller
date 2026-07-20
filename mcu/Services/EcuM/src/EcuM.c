@@ -8,6 +8,8 @@
  */
 
 #include "EcuM.h"
+#include "Can.h"
+#include "Can_Cfg.h"
 #include "CanIf.h"
 /* TODO: 各层模块实现后依次加入
 #include "Com.h"
@@ -25,8 +27,10 @@ void EcuM_Init(void)
      * ================================================================ */
 
     /* --- MCAL 层 --- */
-    /* Can_Init() / Port_Init() 等硬件初始化仍在 main.c 中先执行,
-     * 因为这些函数依赖具体的硬件配置结构体, 由应用层提供 */
+    if (Can_Init(&Can_Config) != STATUS_SUCCESS) {
+        return;
+    }
+    Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
 
     /* --- ECU Abstraction 层 --- */
     CanIf_Init();

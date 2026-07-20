@@ -100,6 +100,7 @@ SRCS_USER  := App/Swc_SignalGateway/src/main.c
 
 # MCAL 层
 SRCS_USER  += MCAL/Can/src/Can.c
+SRCS_USER  += MCAL/Can/config/Can_Cfg.c
 SRCS_USER  += MCAL/Gpio/src/Gpio.c
 SRCS_USER  += MCAL/Mcu/src/Mcu.c
 SRCS_USER  += MCAL/Port/src/pin_mux.c

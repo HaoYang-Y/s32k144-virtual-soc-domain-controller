@@ -323,16 +323,17 @@ void CanIf_Init(void);
 **调用链条**：
 
 ```c
-// main.c — MCAL 硬件初始化在此（依赖具体硬件配置结构体）
-Can_Init(&can0_cfg);
-Can_SetControllerMode(0, CAN_CS_STARTED);
+// main.c — 应用层只需调用 EcuM_Init()
+EcuM_Init();
 
-// EcuM.c — BSW 模块按 AUTOSAR 顺序初始化
+// EcuM.c — EcuM 按 AUTOSAR 顺序统一调度所有 BSW 模块
 EcuM_Init()
-  └── CanIf_Init();          // ← 由 EcuM 统一调用，不在 main.c 中直接调
-  //    SpiIf_Init();        // TODO
-  //    PduR_Init();         // TODO
-  //    Com_Init();          // TODO
+  ├── Can_Init(&Can_Config);          // MCAL 层（配置在 Can_Cfg.c）
+  ├── Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+  ├── CanIf_Init();                   // ECU Abstraction 层
+  //    SpiIf_Init();                 // TODO
+  //    PduR_Init();                  // TODO
+  //    Com_Init();                   // TODO
 ```
 
 ---
@@ -519,7 +520,7 @@ if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
 
 | | 改造前 | 改造后 |
 |--|--------|--------|
-| CAN ID 位置 | 硬编码在 main.c 中 | 集中在 `signals.yaml` + `CanIf_Cfg.c`，改 YAML 即可 |
+| CAN ID 位置 | 配置在 `Can_Cfg.c` 中 | 集中在 `signals.yaml` + `CanIf_Cfg.c`，改 YAML 即可 |
 | 新增报文 | 改 main.c，可能改 Mailbox 布局 | 加 YAML 条目 + 运行生成脚本，main.c 不用改 |
 | 错误检测 | 无，参数错误可能导致 HardFault | DET 框架捕获 NULL 指针、未初始化、无效 PDU ID |
 | 平台移植 | main.c 重写 | 只改 `CanIf_Cfg.c`（生成脚本适配新平台） |

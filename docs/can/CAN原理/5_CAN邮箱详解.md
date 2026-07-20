@@ -271,13 +271,13 @@ can_buff_config_t can0_rx_cfg = {
     .isRemote  = false,
 };
 
-// 全局 CAN 配置
-can_user_config_t can0_cfg = {
+// MCAL Can_ConfigType（实际配置在 Can_Cfg.c 中，由 EcuM 引用）
+const Can_ConfigType Can_Config = {
     .max_num_mb        = 16,   // 共 16 个邮箱
     .num_tx_mailboxes  = 1,    // 只用 1 个 TX 邮箱
     .num_rx_mailboxes  = 1,    // 只用 1 个 RX 邮箱
-    .tx_mailboxes      = &tx_mb_cfg,  // TX 邮箱的 ID 数组
-    .rx_mailboxes      = &rx_mb_cfg,  // RX 邮箱的 ID 数组
+    .tx_mailboxes      = tx_mb,  // TX 邮箱的 ID 数组
+    .rx_mailboxes      = rx_mb,  // RX 邮箱的 ID 数组
 };
 ```
 
