@@ -11,9 +11,10 @@
 #include "Can.h"
 #include "Can_Cfg.h"
 #include "CanIf.h"
+#include "CanTp.h"
+#include "PduR.h"
 /* TODO: 各层模块实现后依次加入
 #include "Com.h"
-#include "PduR.h"
 #include "Rte.h"
 */
 
@@ -27,17 +28,18 @@ void EcuM_Init(void)
      * ================================================================ */
 
     /* --- MCAL 层 --- */
-    if (Can_Init(&Can_Config) != STATUS_SUCCESS) {
+    if (Can_Init(&Can_Config) != E_OK) {
         return;
     }
-    Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+    (void)Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
 
     /* --- ECU Abstraction 层 --- */
     CanIf_Init();
     /* TODO: SpiIf_Init(); */
 
     /* --- Services 层 --- */
-    /* TODO: PduR_Init(); */
+    PduR_Init();
+    CanTp_Init();
     /* TODO: Com_Init(); */
 
     /* --- RTE 层 --- */

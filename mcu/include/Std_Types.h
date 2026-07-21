@@ -53,4 +53,7 @@ typedef volatile uint32_t   vuint32;
 #define E_NOT_OK   1u
 #endif
 
+/** AUTOSAR SWS_StdTypes_00007 — 标准返回值类型 */
+typedef uint8 Std_ReturnType;
+
 #endif /* STD_TYPES_H */

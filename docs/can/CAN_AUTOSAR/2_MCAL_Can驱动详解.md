@@ -88,7 +88,7 @@ MB 索引:  0         1         2..15
 | **每个 MB 同一时刻只能一个方向** | 要么 TX 要么 RX，不能同时 |
 | **RX MB 按 ID 过滤** | 只有匹配的 CAN ID 的帧才会被存入该 MB |
 
-本项目的配置（`main.c` 第 17~21 行）：
+本项目的配置：
 
 ```c
 static const Can_HardwareObject tx_mb[] = {{.id = 0x123UL}};   // TX MB 0: 发 CAN ID 0x123
@@ -103,22 +103,22 @@ static const Can_HardwareObject rx_mb[] = {{.id = 0x100UL}};   // RX MB 1: 收 C
 ### 3.1 Can_PduType — 一帧 CAN 数据
 
 ```c
-// Can.h 第 47~54 行
+// Can.h
 typedef struct {
-    uint32_t id;           // CAN ID (11-bit 标准帧 或 29-bit 扩展帧)
-    uint8_t  length;       // 数据长度 (0~8 字节)
-    bool     is_extended;  // true = 扩展帧 (29-bit ID), false = 标准帧 (11-bit)
-    bool     is_remote;    // true = 远程帧 (请求数据，极少用)
-    uint8_t  data[8];      // 8 字节数据载荷
+    Can_IdType   id;          // CAN ID — AUTOSAR 标准类型 Can_IdType (uint32_t)
+    uint8_t      length;      // 数据长度 (0~8 字节)
+    bool         is_extended; // true = 扩展帧 (29-bit ID), false = 标准帧 (11-bit)
+    bool         is_remote;   // true = 远程帧 (请求数据，极少用)
+    uint8_t      data[8];     // 8 字节数据载荷 — L-PDU 定长数组
 } Can_PduType;
 ```
 
-> ⚠️ **踩坑记录**：`is_extended` 和 `is_remote` 必须显式初始化为 `false`。如果栈上不初始化（如 `Can_PduType canPdu;` 只赋值 `id`/`length`/`data` 三个字段），垃圾值可能导致标准帧被当成扩展帧发出，对方完全收不到。这个 Bug 我们实际在 CanIf 层踩过——CanIf_Transmit 中构造 `Can_PduType` 时漏了这两个字段。根因是 MCAL 层的类型设计（栈上不初始化则字段不确定），所以此处重点标注。CanIf 层的修复方法见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md) §5.2。
+> ⚠️ **踩坑记录**：`is_extended` 和 `is_remote` 必须显式初始化为 `false`。栈上不初始化这两个 `bool` 字段，垃圾值可能导致标准帧被当成扩展帧发出。构造 `Can_PduType` 时务必使用 `= {0}` 全量零初始化。
 
 ### 3.2 Can_HardwareObject — Mailbox 定义
 
 ```c
-// Can.h 第 41~45 行
+// Can.h
 typedef struct {
     uint32_t id;           // 该 MB 绑定的 CAN ID
     bool     is_extended;  // 是否匹配扩展帧
@@ -131,7 +131,7 @@ TX MB 的 `id` 仅作标识；RX MB 的 `id` 是**硬件过滤器**——只有�
 ### 3.3 Can_ConfigType — 初始化配置
 
 ```c
-// Can.h 第 60~82 行
+// Can.h
 typedef struct {
     uint8_t       controller;         // 控制器编号 (0 = FlexCAN0)
     uint8_t       max_num_mb;         // 最大 Mailbox 数 (S32K144 = 16)
@@ -178,6 +178,47 @@ typedef enum {
 
 **Can_Write 和 Can_Read 内部第一件事就是检查 `Can_State == CAN_CS_STARTED`**，不是 STARTED 直接返回 ERROR。
 
+### 3.6 AUTOSAR 标准类型
+
+对标 AUTOSAR SWS_Can 规范，本模块新增了三个标准类型：
+
+```c
+// Can.h
+
+/** CAN 消息 ID 类型 (SWS_Can_00008) */
+typedef uint32_t Can_IdType;
+
+/** Hardware Object Handle (SWS_Can_00009)
+ *  用于 Can_Write 的 HTH 和 Can_Read 的 HRH，替代裸 uint8_t */
+typedef uint16_t Can_HwHandleType;
+
+/** CAN 控制器错误状态 (SWS_Can_00016) */
+typedef enum {
+    CAN_ERRORSTATE_ACTIVE  = 0,   // Error Active  — 正常通信
+    CAN_ERRORSTATE_PASSIVE = 1,   // Error Passive — 可通信但受限
+    CAN_ERRORSTATE_BUSOFF  = 2,   // Bus Off       — 脱离总线
+} Can_ErrorStateType;
+```
+
+**为什么需要这些类型？**
+- `Can_IdType`：替代裸 `uint32_t`，语义更清晰——"这是一个 CAN ID"
+- `Can_HwHandleType`：替代裸 `uint8_t`，且扩展为 `uint16_t`——当有多控制器时，高字节可编码控制器索引
+- `Can_ErrorStateType`：支持 `Can_GetControllerErrorState()` 返回值语义化
+
+### 3.7 AUTOSAR 标准 API
+
+```c
+/** 查询控制器错误状态 (SWS_Can_00167) */
+Std_ReturnType Can_GetControllerErrorState(Can_ControllerType  Controller,
+                                           Can_ErrorStateType *ErrorStatePtr);
+
+/** 查询控制器当前模式 (SWS_Can_00130) */
+Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
+                                     Can_ControllerStateType *ModePtr);
+```
+
+当前实现返回内部维护的静态状态值，后续可扩展为读取 FlexCAN 硬件寄存器（ESR1）。
+
 ---
 
 ## 4. AUTOSAR 定义的两种收发方式
@@ -189,7 +230,7 @@ AUTOSAR SWS_Can 规范定义了 CAN 驱动的两种运行模式，区别在于**
 ```
 main() 循环:
   │
-  ├── Can_Write(0, MB0, &tx)     ← 主动调用，立即提交到硬件
+  ├── Can_Write(MB0, &tx)        ← 主动调用，立即提交到硬件
   │
   ├── Can_Read(0, MB1, &rx)      ← 主动调用，当场检查"有没有新帧？"
   │     有 → 返回数据
@@ -220,7 +261,7 @@ main() 循环:
 
 main() 循环:
   │
-  ├── Can_Write(0, MB0, &tx)     ← TX 不变（本来异步）
+  ├── Can_Write(MB0, &tx)        ← TX 不变（本来异步）
   │
   └── Can_MainFunctionRead()     ← AUTOSAR 要求周期性调，处理 ISR 缓冲的数据
 ```
@@ -293,7 +334,7 @@ void Can_EnableCanInterrupts(uint8_t Controller, uint8_t Hoh);
 ### 5.1 Can_Init — 对标 AUTOSAR SWS_Can_00013
 
 ```c
-status_t Can_Init(const Can_ConfigType *ConfigPtr);
+Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr);
 ```
 
 > **AUTOSAR 规范定义**：初始化 CAN 控制器硬件，配置位时序和 Mailbox。成功后控制器进入 CAN_CS_STOPPED 状态。每个控制器只能 Init 一次，重复 Init 必须先 DeInit。
@@ -362,10 +403,10 @@ const Can_ConfigType Can_Config = {
 
 ```c
 // EcuM.c — EcuM_Init() 内部按 AUTOSAR 顺序调用
-if (Can_Init(&Can_Config) != STATUS_SUCCESS) {
-    return;                             // 初始化失败，进入安全状态
+if (Can_Init(&Can_Config) != E_OK) {
+    return;                                  // 初始化失败，进入安全状态
 }
-Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+(void)Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
 ```
 
 ```c
@@ -375,32 +416,30 @@ EcuM_Init();  // 内部依次初始化 MCAL → ECU Abstraction → Services →
 
 ---
 
-### 5.2 Can_Write — 对标 AUTOSAR SWS_Can_00015
+### 5.2 Can_Write — 对标 AUTOSAR SWS_Can_00106
 
 ```c
-status_t Can_Write(uint8_t Controller, uint8_t Hth, const Can_PduType *PduInfo);
+Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo);
 ```
 
-> **AUTOSAR 规范定义**：将一个 CAN PDU 写入由 Hth（Hardware Transmit Handle）标识的 TX 硬件对象。函数立即返回，不等待发送完成。发送完成通过 CanIf_TxConfirmation 异步通知。
+> **AUTOSAR 规范定义**：将一个 CAN L-PDU 写入由 Hth（Hardware Transmit Handle）标识的 TX 硬件对象。Controller 由驱动内部根据配置维护，不暴露给调用方。函数立即返回，不等待发送完成。
 
 | 参数 | 含义 | 本项目实际值 |
 |------|------|-------------|
-| `Controller` | CAN 控制器编号 | 0 = FlexCAN0 |
-| `Hth` | TX Mailbox 索引 | 0 = TX_MB（第一个也是唯一一个 TX MB） |
-| `PduInfo` | 指向待发送帧数据 | `{id=0x123, length=8, data[8]=...}` |
+| `Hth` | TX Hardware Transmit Handle（Mailbox 索引） | 0 = TX_MB（唯一 TX MB） |
+| `PduInfo` | 指向待发送 L-PDU | `{id=0x123, length=8, data[8]=...}` |
 
-返回值：`STATUS_SUCCESS`（发送请求已提交）或 `STATUS_ERROR`（参数错误 / 控制器未启动）。
+返回值：`E_OK`（发送请求已提交）或 `E_NOT_OK`（参数错误 / 控制器未启动）。
 
 **内部流程**：
 
 ```
-Can_Write(Controller=0, Hth=0, PduInfo)
+Can_Write(Hth=0, PduInfo)
   │
-  ├── 1. 参数校验（6 项全通过才继续）
-  │      · Controller < CAN_CONTROLLER_MAX ?
+  ├── 1. 参数校验（5 项全通过才继续，Controller 由内部获取）
   │      · Can_Initialized == true ?
-  │      · Can_State[0] == CAN_CS_STARTED ?   ← 没 Start 就调 Write 会失败
-  │      · Hth < Can_TxCount ?                ← MB 索引不能超出已配置的 TX MB 数
+  │      · Can_State[Can_Config.controller] == CAN_CS_STARTED ?
+  │      · Hth < Can_TxCount ?
   │      · PduInfo != NULL ?
   │      · PduInfo->length ≤ 8 ?
   │
@@ -412,7 +451,7 @@ Can_Write(Controller=0, Hth=0, PduInfo)
   │      tx_msg.length = PduInfo->length
   │      for i: tx_msg.data[i] = PduInfo->data[i]
   │
-  └── 4. CAN_Send(&Can_Instance, Hth, &tx_msg)
+  └── 4. CAN_Send(&Can_Instance, Hth, &tx_msg) → 映射为 E_OK/E_NOT_OK
          内部 → FLEXCAN_DRV_Send() → 写 MB CS 寄存器 CODE=0xC → 硬件自动发送
          注意：此函数立即返回！实际发送由 FlexCAN 硬件异步完成
 ```
@@ -435,8 +474,8 @@ tx.data[2] = 0xAA;
 tx.data[3] = 0x55;
 // ...
 
-status_t ret = Can_Write(0, 0, &tx);
-if (ret != STATUS_SUCCESS) {
+Std_ReturnType ret = Can_Write(0, &tx);   // AUTOSAR: 只传 Hth，不传 Controller
+if (ret != E_OK) {
     // 错误处理
 }
 ```
@@ -497,11 +536,11 @@ if (Can_Read(0, 1, &rx) == STATUS_SUCCESS) {
 
 ---
 
-### 5.4 Can_SetControllerMode — 对标 AUTOSAR SWS_Can_00019
+### 5.4 Can_SetControllerMode — 对标 AUTOSAR SWS_Can_00098
 
 ```c
-void Can_SetControllerMode(Can_ControllerType Controller,
-                           Can_ControllerStateType Transition);
+Std_ReturnType Can_SetControllerMode(Can_ControllerType Controller,
+                                     Can_ControllerStateType Transition);
 ```
 
 > **AUTOSAR 规范定义**：切换 CAN 控制器的运行模式。本实现为纯软件状态机——仅修改 `Can_State[]` 全局变量，不操作硬件寄存器（NXP PAL 未暴露 Freeze/Run API）。
@@ -519,7 +558,7 @@ Can_DeInit() → UNINIT
 ### 5.5 Can_DeInit — 对标 AUTOSAR SWS_Can_00014
 
 ```c
-void Can_DeInit(void);
+Std_ReturnType Can_DeInit(void);
 ```
 
 > **AUTOSAR 规范定义**：反初始化 CAN 控制器，释放所有硬件资源。之后可重新 Init。
@@ -555,14 +594,14 @@ void can_demo(void) {
     EcuM_Init();  // 内部: Can_Init(&Can_Config) → Can_SetControllerMode() → CanIf_Init()
 
     // 4. 启动控制器
-    Can_SetControllerMode(0, CAN_CS_STARTED);
+    (void)Can_SetControllerMode(0, CAN_CS_STARTED);
 
-    // 5. 发送一帧
+    // 5. 发送一帧 (AUTOSAR 标准签名: 只传 Hth)
     Can_PduType tx = {0};
     tx.id = 0x123UL;
     tx.length = 8U;
     tx.data[0] = 0x01; tx.data[1] = 0x02;  // ... 填充数据
-    Can_Write(0, 0, &tx);
+    Can_Write(0, &tx);   // Hth=0, 不传 Controller
 
     // 6. 轮询接收
     Can_PduType rx = {0};
@@ -571,8 +610,8 @@ void can_demo(void) {
     }
 
     // 7. 反初始化
-    Can_SetControllerMode(0, CAN_CS_STOPPED);
-    Can_DeInit();
+    (void)Can_SetControllerMode(0, CAN_CS_STOPPED);
+    (void)Can_DeInit();
 }
 ```
 

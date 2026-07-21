@@ -1,28 +1,30 @@
 /**
  * @file    PduR.c
- * @brief   [SKELETON] PDU Router 实现
+ * @brief   [AUTOSAR CP] PDU Router 实现
+ *
+ * @note    TODO: 路由表查找 → 根据 PduId 转发至目标模块
  */
 
 #include "PduR.h"
 
 void PduR_Init(void) { /* TODO */ }
 
-uint8_t PduR_ComTransmit(PduR_PduIdType PduId, const PduR_InfoType *PduInfo)
+Std_ReturnType PduR_ComTransmit(PduIdType PduId, const PduInfoType *PduInfoPtr)
 {
     (void)PduId;
-    (void)PduInfo;
-    /* TODO: 查找路由表 → 调用 CanIf_Transmit(目标控制器, PDU) */
-    return 0U;
+    (void)PduInfoPtr;
+    /* TODO: 查找路由表 → 调用 CanTp_Transmit 或 CanIf_Transmit */
+    return E_OK;
 }
 
-void PduR_CanIfRxIndication(PduR_PduIdType RxPduId, const PduR_InfoType *PduInfo)
+void PduR_CanIfRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
 {
     (void)RxPduId;
-    (void)PduInfo;
-    /* TODO: 查找路由表 → 调用 Com_RxIndication */
+    (void)PduInfoPtr;
+    /* TODO: 查找路由表 → 调用 Com_RxIndication(路由后的 I-PDU ID, PduInfoPtr) */
 }
 
-void PduR_CanIfTxConfirmation(PduR_PduIdType TxPduId)
+void PduR_CanIfTxConfirmation(PduIdType TxPduId)
 {
     (void)TxPduId;
     /* TODO: 通知 Com 发送完成 */

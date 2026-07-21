@@ -94,81 +94,42 @@ AUTOSAR CP 将 CAN 通信拆分为五个层次,从应用信号到物理总线逐
 **核心类型**：
 
 ```c
-// Can.h 第 47~54 行 — CAN PDU 数据单元
+// Can.h — CAN L-PDU 数据单元
 typedef struct {
-    uint32_t id;           // CAN ID (11-bit 或 29-bit)
-    uint8_t  length;       // 数据长度 (0~8)
-    bool     is_extended;  // 是否扩展帧
-    bool     is_remote;    // 是否远程帧
-    uint8_t  data[8];      // 数据载荷
+    Can_IdType   id;          // CAN ID (11-bit 或 29-bit)
+    uint8_t      length;      // 数据长度 (0~8)
+    bool         is_extended; // 是否扩展帧
+    bool         is_remote;   // 是否远程帧
+    uint8_t      data[8];     // 数据载荷 — 定长 8 字节
 } Can_PduType;
 
-// Can.h 第 60~82 行 — 驱动配置
-typedef struct {
-    uint8_t       controller;        // 控制器编号
-    uint8_t       max_num_mb;        // 最大 Mailbox 数
-    bool          is_rx_fifo_needed; // 是否使用 RX FIFO
-    Can_ModeType  flexcan_mode;      // NORMAL / LOOPBACK
-    uint8_t       prop_seg;          // 位时序: PROP_SEG
-    uint8_t       phase_seg1;        // 位时序: PHASE_SEG1
-    uint8_t       phase_seg2;        // 位时序: PHASE_SEG2
-    uint8_t       pre_divider;       // 波特率预分频
-    uint8_t       r_jumpwidth;       // SJW
-    uint8_t       num_tx_mailboxes;  // TX Mailbox 数量
-    uint8_t       num_rx_mailboxes;  // RX Mailbox 数量
-    const Can_HardwareObject *tx_mailboxes;  // TX MB 列表
-    const Can_HardwareObject *rx_mailboxes;  // RX MB 列表
-} Can_ConfigType;
+// Can.h — AUTOSAR 标准类型
+typedef uint32_t Can_IdType;
+typedef uint16_t Can_HwHandleType;
+typedef enum { CAN_ERRORSTATE_ACTIVE, CAN_ERRORSTATE_PASSIVE,
+               CAN_ERRORSTATE_BUSOFF } Can_ErrorStateType;
 ```
 
 **核心 API**：
 
 ```c
-// Can.h 第 88~95 行
-status_t  Can_Init(const Can_ConfigType *ConfigPtr);
-void      Can_DeInit(void);
-void      Can_SetControllerMode(Can_ControllerType Controller,
-                                Can_ControllerStateType Transition);
-status_t  Can_Write(uint8_t Controller, uint8_t Hth, const Can_PduType *PduInfo);
-status_t  Can_Read(uint8_t Controller, uint8_t Hrh, Can_PduType *PduInfo);
+// Can.h — AUTOSAR 标准 API
+Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr);
+Std_ReturnType Can_DeInit(void);
+Std_ReturnType Can_SetControllerMode(Can_ControllerType Controller,
+                                     Can_ControllerStateType Transition);
+Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo);
+status_t       Can_Read(uint8_t Controller, uint8_t Hrh, Can_PduType *PduInfo);
+Std_ReturnType Can_GetControllerErrorState(Can_ControllerType, Can_ErrorStateType*);
+Std_ReturnType Can_GetControllerMode(Can_ControllerType, Can_ControllerStateType*);
 ```
 
-**实现要点**（`Can.c`）：
+> `Can_Write` 按 AUTOSAR 标准只传 Hth（不含 Controller），Controller 由驱动内部维护。`Can_Read` 为轮询模式项目扩展。
 
-1. **MCAL 配置 → PAL 配置转换**（`Can_BuildPalConfig()`, 第 41~61 行）：
-   - 位时序字段直接映射到 `can_user_config_t.nominalBitrate`
-   - `enableFD = false`, `payloadSize = CAN_PAYLOAD_SIZE_8`（经典 CAN）
-   - `peClkSrc = CAN_CLK_SOURCE_OSC`
+**实现要点**：
 
-2. **初始化流程**（`Can_Init()`, 第 67~111 行）：
-   ```
-   Can_Init()
-     ├── 保存 MCAL 配置副本
-     ├── Can_BuildPalConfig() → can_user_config_t
-     ├── CAN_Init(&Can_Instance, &Can_PalConfig)     // PAL 初始化（内部操作 FlexCAN 寄存器）
-     ├── for (TX MBs): CAN_ConfigTxBuff()              // 配置发送 Mailbox
-     └── for (RX MBs): CAN_ConfigRxBuff()              // 配置接收 Mailbox（设置过滤 ID）
-   ```
-
-3. **发送流程**（`Can_Write()`, 第 147~171 行）：
-   ```
-   Can_Write()
-     ├── 参数校验（初始化/控制器/状态/Hth/长度）
-     ├── CAN_ConfigTxBuff()  ← 关键：每次发送前必须重配 TX MB
-     │                         原因：上次发送后 MB 状态不为空闲，
-     │                         PAL 内部 FLEXCAN_DRV_Send 的状态检查
-     │                         会因 MB 非空闲而返回 BUSY
-     ├── 构造 can_message_t (id, length, data[0..7])
-     └── CAN_Send(&Can_Instance, Hth, &tx_msg)
-   ```
-
-4. **接收流程**（`Can_Read()`, 第 177~201 行）：
-   ```
-   Can_Read()
-     ├── 参数校验
-     ├── CAN_Receive(&Can_Instance, Hrh, &rx_msg)  // MB 索引 = TX 数量 + RX 偏移
-     └── 填充 Can_PduType (id, length, is_extended, data[0..7])
-   ```
+- **Can_Write**：每次发送前调 `CAN_ConfigTxBuff()` 重配 TX MB（上次发送后 MB 状态非空闲）
+- **Can_Read**：轮询 RX MB，有新帧则填充 `Can_PduType` 返回
 
 **与 NXP SDK 的关系**：
 
@@ -205,11 +166,11 @@ MCAL 封装的好处：
 **核心 API**：
 
 ```c
-// CanIf.h 第 41~61 行
+// CanIf.h
 void    CanIf_Init(void);
-uint8_t CanIf_Transmit(CanIf_ControllerType Controller, CanIf_PduType *PduPtr);
-void    CanIf_RxIndication(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
-void    CanIf_TxConfirmation(CanIf_ControllerType Controller, const CanIf_PduType *PduPtr);
+Std_ReturnType CanIf_Transmit(PduIdType TxPduId, const PduInfoType *PduInfoPtr);
+void           CanIf_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
+void           CanIf_TxConfirmation(PduIdType TxPduId);
 CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 ```
 
@@ -238,7 +199,7 @@ CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 **核心概念**：
 
 ```c
-// CanTp.h 第 22~27 行 — 四种帧类型
+// CanTp.h — ISO 15765-2 四种帧类型
 typedef enum {
     CANTP_SF = 0,   // Single Frame: 单帧（数据 ≤ 7 字节，一个 CAN 帧搞定）
     CANTP_FF = 1,   // First Frame:  首帧（多帧传输的第一帧，含总长度）
@@ -265,11 +226,11 @@ typedef enum {
     (最后数据)
 ```
 
-**当前状态**：骨架（SKELETON），仅有类型定义和函数声明。
+**当前状态**：已激活，由 EcuM 编译和初始化。PCI 编解码 + SF/FF/CF/FC 状态机已实现（TX 简化 FC 等待，RX 含 FC 回复）。详见 [4_N-PDU网络层协议数据单元详解](./4_N-PDU网络层协议数据单元详解.md)。
 
 ---
 
-### 2.4 PduR — PDU Router（骨架）
+### 2.4 PduR — PDU Router（已激活）
 
 **职责**：在通信协议栈中**路由 I-PDU**。典型的 AUTOSAR 系统中，PduR 负责在
 Com、CanTp、SpiIf（CAN 之外的通信总线接口）等模块之间转发 PDU。
@@ -290,14 +251,14 @@ Com、CanTp、SpiIf（CAN 之外的通信总线接口）等模块之间转发 PD
 **核心 API**：
 
 ```c
-// PduR.h 第 22~25 行
+// PduR.h
 void    PduR_Init(void);
-uint8_t PduR_ComTransmit(PduR_PduIdType PduId, const PduR_InfoType *PduInfo);
-void    PduR_CanIfRxIndication(PduR_PduIdType RxPduId, const PduR_InfoType *PduInfo);
-void    PduR_CanIfTxConfirmation(PduR_PduIdType TxPduId);
+Std_ReturnType PduR_ComTransmit(PduIdType PduId, const PduInfoType *PduInfoPtr);
+void           PduR_CanIfRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
+void           PduR_CanIfTxConfirmation(PduIdType TxPduId);
 ```
 
-**当前状态**：骨架（SKELETON），仅有类型定义和函数声明。
+**当前状态**：已激活，由 EcuM 编译和初始化。路由表已配置，路由逻辑 WIP。
 
 ---
 
@@ -326,7 +287,7 @@ void    PduR_CanIfTxConfirmation(PduR_PduIdType TxPduId);
 **核心 API**：
 
 ```c
-// Com.h 第 34~37 行 (实际为 31~37 行)
+// Com.h
 void Com_Init(void);
 void Com_MainFunction(void);
 void Com_SendSignal(Com_SignalIdType SignalId, const void *SignalData);
@@ -421,50 +382,59 @@ SWC/App
 
 ```
     Com:    [SKELETON] 仅有类型和函数声明，无实现
-    PduR:   [SKELETON] 仅有类型和函数声明，无实现
-    CanTp:  [SKELETON] 仅有类型和函数声明，无实现
+    PduR:   [已激活]    由 EcuM 编译和初始化，路由表已配置
+    CanTp:  [已激活]    PCI 编解码 + SF/FF/CF/FC 状态机，详见 4_N-PDU网络层协议数据单元详解
     EcuM:   [已实现]    按 AUTOSAR 顺序调度 BSW 模块初始化
-    CanIf:  [已实现]    PDU 抽象 + DET + YAML 自动配置，详见 3_CanIf_CAN接口层详解
-    Can:    [已实现]    基于 NXP CAN PAL 的完整 MCAL 驱动，详见 2_MCAL_Can驱动详解
+    CanIf:  [已实现]    PDU 抽象(AUTOSAR PduInfoType) + DET + YAML 自动配置
+    Can:    [已实现]    AUTOSAR 标准 MCAL 驱动(AUTOSAR Can_Write 签名)，详见 2
 ```
 
 ### 4.2 当前实际使用的数据路径
 
-已实现两层 AUTOSAR 抽象（Can + CanIf），`main.c` 通过 `CanIf_Transmit` 发送、轮询 `Can_Read` 接收：
+`main.c` → `PduInfoType` (N-PDU) → `CanIf_Transmit(PduId, &pduInfo)` → `Can_Write(Hth, &canPdu)`：
 
 ```c
-// mcu/App/Swc_SignalGateway/src/main.c — 当前数据流
-// BSW 初始化: EcuM_Init() → CanIf_Init()
+// mcu/App/Swc_SignalGateway/src/main.c — AUTOSAR 标准数据流
+// BSW 初始化: EcuM_Init() → Can→CanIf→PduR→CanTp
 
 for (;;) {
-    // TX: CanIf_Transmit(PDU_ID) → Can_Write(CAN_ID) → 硬件
-    CanIf_PduType txPdu = {.id = CANIF_PDU_ID_TX_0x123, .length = 8U, .data = txData};
-    CanIf_Transmit(0, &txPdu);
+    // TX: AUTOSAR 标准 PduInfoType (即 N-PDU)
+    PduInfoType txPdu = {
+        .SduId = CANIF_PDU_ID_TX_0x123, .SduLength = 8U, .SduDataPtr = txData
+    };
+    CanIf_Transmit(CANIF_PDU_ID_TX_0x123, &txPdu);
 
     // RX: Can_Read → CanIf_FindPduIdByCanId → CanIf_RxIndication
     Can_PduType rx;
     if (Can_Read(0, RX_MB, &rx) == STATUS_SUCCESS) {
         pduId = CanIf_FindPduIdByCanId(rx.id);
-        CanIf_RxIndication(0, &rxIfPdu);
+        PduInfoType rxPdu = {
+            .SduId = pduId, .SduLength = rx.length, .SduDataPtr = rx.data
+        };
+        CanIf_RxIndication(pduId, &rxPdu);
     }
+```
     cnt++; delay_ms(500);
 }
 ```
 
 ### 4.3 向完整 AUTOSAR 栈迁移的路线图
 
-当需要完整 AUTOSAR Com 栈时（如需要信号级通信、多帧 OTA、UDS 诊断等），
-按以下顺序实现：
+1. ✅ **CanIf → Can 桥接**：已完成。`CanIf_Transmit(PduId, PduInfoType*)` → `Can_Write(Hth, Can_PduType*)`，AUTOSAR 标准签名
 
-1. ✅ **CanIf → Can 桥接**：已完成。`CanIf_Transmit()` → `Can_Write()`，`CanIf_RxIndication()` 接收回调机制
+2. ✅ **ComStack_Types.h**：已完成。全栈统一 `PduInfoType`（`SduId`/`SduLength`/`SduDataPtr`）
 
-2. ⬜ **PduR 路由表**：实现 `PduR_ComTransmit()` 路由到 CanIf，`PduR_CanIfRxIndication()` 路由到 Com
+3. ✅ **CanTp N-PDU 处理**：已完成。PCI 编解码 + SF/FF/CF/FC 状态机（TX 简化 FC、RX 含 FC 回复）
 
-3. ⬜ **Com 信号打包**：实现信号到 PDU 的位布局，实现 `Com_SendSignal()` 和 `Com_ReceiveSignal()`
+4. ✅ **PduR + CanTp 编译集成**：已完成。EcuM 统一调度 `Can→CanIf→PduR→CanTp` 初始化
 
-4. ⬜ **中断模式**：将 RX 从轮询迁移到硬件中断驱动（方案见 [中断模式迁移方案](./中断模式迁移方案.md)）
+5. ⬜ **PduR 路由逻辑**：路由表已有配置，实现 `PduR_ComTransmit()` → `CanTp_Transmit()` 查找-转发逻辑
 
-5. ⬜ **CanTp 多帧**（可选）：实现 ISO 15765-2 的 SF/FF/CF/FC 处理
+6. ⬜ **Com 信号打包**：实现信号到 PDU 的位布局，`Com_SendSignal()` / `Com_ReceiveSignal()`
+
+7. ⬜ **中断模式**：RX 从轮询迁移到中断驱动（方案见 [中断模式迁移方案](./中断模式迁移方案.md)）
+
+8. ⬜ **CanTp FC 流控完善**：TX 侧完整的 FC 等待 + BS/STmin 速率控制
 
 ---
 
@@ -476,9 +446,9 @@ for (;;) {
 
 | 模块 | Module ID (AUTOSAR 规范) | 文件 |
 |------|-------------------------|------|
-| CanIf | 0x32 (50) | `CanIf.c` 第 18 行 |
+| CanIf | 0x32 (50) | `CanIf.c` |
 
-各模块的 API ID 用于精确定位错误来源（`CanIf.c` 第 22~26 行）：
+各模块的 API ID 用于精确定位错误来源：
 
 ```c
 #define CANIF_INIT_ID          0x00U
@@ -489,7 +459,7 @@ for (;;) {
 
 ### 5.2 每次 Can_Write 前必须重配 TX MB
 
-这是该项目 Can.c 最重要的一个工程技巧（`Can.c` 第 142~145 行注释 + 第 160 行代码）：
+这是该项目最重要的一个工程技巧：
 
 ```c
 // 关键: 每次发送前必须调用 CAN_ConfigTxBuff 重新配置 TX MB,
@@ -522,30 +492,31 @@ PAL 认为 MB 仍被占用，返回 `STATUS_BUSY`。
     │  └── API:  Com_SendSignal(), Com_ReceiveSignal()  [骨架] │
     │                                                         │
     │  PduR (mcu/Services/PduR)                               │
-    │  ├── 类型: PduR_PduIdType, PduR_InfoType                │
+    │  ├── 类型: PduInfoType (ComStack_Types.h)                │
     │  └── API:  PduR_ComTransmit(), PduR_CanIfRxIndication() │
-    │            [骨架]                                        │
+    │            [已激活]                                        │
     │                                                         │
     │  CanTp (mcu/Services/CanTp)                             │
     │  ├── 类型: CanTp_FrameType (SF/FF/CF/FC)                │
-    │  └── API:  CanTp_Transmit(), CanTp_RxIndication() [骨架] │
+    │  └── API:  CanTp_Transmit(), CanTp_RxIndication() [已激活] │
     └──────────────────────┬──────────────────────────────────┘
                            │
     ┌──────────────────────┼──────────────────────────────────┐
     │            ECU Abstraction Layer                        │
     │                                                         │
     │  CanIf (mcu/EcuAbstraction/CanIf)                       │
-    │  ├── 类型: CanIf_ControllerType, CanIf_PduType          │
+    │  ├── 类型: PduInfoType (ComStack_Types.h)               │
     │  ├── API:  CanIf_Transmit(), CanIf_RxIndication()       │
-    │  └── DET:  ModuleId=0x32, ApiId, ErrorId         [骨架] │
+    │  └── DET:  ModuleId=0x32, ApiId, ErrorId         [已实现] │
     └──────────────────────┬──────────────────────────────────┘
                            │
     ┌──────────────────────┼──────────────────────────────────┐
     │                MCAL Layer                               │
     │                                                         │
     │  Can (mcu/MCAL/Can)                                       │
-    │  ├── 类型: Can_ConfigType, Can_PduType                  │
+    │  ├── 类型: Can_IdType, Can_HwHandleType, Can_PduType     │
     │  ├── API:  Can_Init(), Can_Write(), Can_Read()   [已实现] │
+    │  ├── API:  Can_GetControllerErrorState/Mode                │
     │  └── 封装: NXP CAN PAL (can_pal.h)                      │
     └──────────────────────┬──────────────────────────────────┘
                            │
@@ -568,13 +539,15 @@ PAL 认为 MB 仍被占用，返回 `STATUS_BUSY`。
 
 ## 参考文件
 
-| 文件 | 行数（关键） | 内容 |
-|------|-------------|------|
-| `mcu/MCAL/Can/include/Can.h` | 41~54 (类型), 60~82 (配置), 88~95 (API) | MCAL Can 驱动头文件 |
-| `mcu/MCAL/Can/src/Can.c` | 41~61 (配置转换), 67~111 (初始化), 147~171 (发送), 177~201 (接收) | MCAL Can 驱动实现 |
-| `mcu/EcuAbstraction/CanIf/include/CanIf.h` | 20~30 (类型), 41~56 (API) | CanIf 头文件 |
-| `mcu/EcuAbstraction/CanIf/src/CanIf.c` | 18~32 (DET), 39~43 (初始化), 87~108 (发送) | CanIf 骨架实现 |
-| `mcu/Services/CanTp/include/CanTp.h` | 15~33 | CanTp 类型定义 |
-| `mcu/Services/PduR/include/PduR.h` | 14~25 | PduR 类型定义 |
-| `mcu/Services/Com/include/Com.h` | 18~42 | Com 类型定义 |
-| `mcu/App/Swc_SignalGateway/src/main.c` | 17~63 | 应用层 CAN 测试程序 |
+| 文件 | 内容 |
+|------|------|
+| `mcu/include/ComStack_Types.h` | **全栈共享** `PduInfoType` / `PduIdType` / `PduLengthType` |
+| `mcu/MCAL/Can/include/Can.h` | MCAL Can 驱动 + `Can_IdType`/`Can_HwHandleType`/`Can_ErrorStateType` |
+| `mcu/MCAL/Can/src/Can.c` | MCAL Can 驱动实现（AUTOSAR 标准 `Can_Write(Hth, Pdu)` 签名） |
+| `mcu/EcuAbstraction/CanIf/include/CanIf.h` | CanIf 头文件（使用 `PduInfoType*`，AUTOSAR 标准） |
+| `mcu/EcuAbstraction/CanIf/src/CanIf.c` | CanIf 实现：N-PDU → L-PDU 格式转换 + DET |
+| `mcu/Services/CanTp/include/CanTp.h` | CanTp API + PCI 编解码 |
+| `mcu/Services/CanTp/src/CanTp.c` | N-PDU 处理核心：SF/FF/CF/FC 状态机 |
+| `mcu/Services/PduR/include/PduR.h` | PduR I-PDU 路由（使用 `PduInfoType*`） |
+| `mcu/Services/Com/include/Com.h` | Com 类型定义（I-PDU） |
+| `mcu/App/Swc_SignalGateway/src/main.c` | 应用层 CAN 测试程序 |
