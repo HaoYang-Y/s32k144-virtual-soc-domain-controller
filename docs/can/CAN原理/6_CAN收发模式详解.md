@@ -467,7 +467,7 @@ FLEXCAN_DRV_InstallEventCallback(0, DmaCompleteCallback, NULL);
   APP 层 (main.c): delay_ms(500) + 轮询 Can_Read/Can_Write
   MCAL 配置: Can_Cfg.h 定义了 CAN_INTERRUPT_ENABLE = STD_ON 但 Can.c 并未使用
 
-本质: 硬件中断已就绪，但软件层未安装回调 → 实际等价于纯轮询，500ms 读一次
+本质: 硬件中断已就绪，MCAL 已安装回调 → **中断驱动模式已启用** ✅
 ```
 
 ### 7.2 最小改动：在 MCAL 层安装中断回调
@@ -557,8 +557,8 @@ S32K144 的 Cortex-M4 跑 48MHz，CAN 500kbps 最多约每秒 5000 帧。每次 
 │  4. 同一 ISR 内又有阻塞(等信号量) vs 非阻塞(回调)之分               │
 │  5. 量产车: 中断是绝对主流(~90%)，DMA 基本不用                       │
 │  6. AUTOSAR 标准: 中断(实时帧) + 轮询 MainFunction(非实时帧) 并存    │
-│  7. 本项目: SDK 已注册 ISR 向量表，MCAL 未安装回调 → 等同纯轮询        │
-│  8. 最小改动: Can_Init() 中加一行 CAN_InstallEventCallback() 即可      │
+│  7. 本项目: ✅ 中断模式已启用（Can_EnableInterrupts + Can_MainFunctionRx）│
+│  8. 中断 ISR 核心原则: 只设 flag → 主循环 Can_MainFunctionRx 消费        │
 │  9. 中断 ISR 的核心原则: 尽可能快 → 只做拷贝 + 重锁存邮箱              │
 └──────────────────────────────────────────────────────────────────┘
 ```

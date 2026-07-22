@@ -24,8 +24,6 @@
 #include "pins_driver.h"
 #include <stdint.h>
 
-#define TX_MB  0U
-#define RX_MB  1U  /* idx = TX数量 + 0 = 1 */
 
 static void delay_ms(uint32_t ms){
     volatile uint32_t i; for(;ms>0;ms--) for(i=0;i<12000U;i++)__asm__("nop");
@@ -40,12 +38,12 @@ int main(void)
 
     /* BSW 模块初始化 (自底向上: MCAL → ECU Abstraction → Services → RTE) */
     EcuM_Init();
+    Can_EnableInterrupts();  /* RX 中断模式 — ISR 自动接收，不再轮询 */
 
     for(;;)
     {
         /* ================================================================
          *  TX: main → CanIf_Transmit(PduId, &pduInfo) → Can_Write(Hth, &canPdu) → 硬件
-         *  AUTOSAR 标准: CanIf_Transmit 不传 Controller，由 CanIf 内部查表获取
          * ================================================================ */
         {
             uint8_t txData[8];
@@ -53,7 +51,6 @@ int main(void)
             txData[2]=0xAA; txData[3]=0x55; txData[4]=0xAA; txData[5]=0x55;
             txData[6]=(cnt>>16)&0xFF; txData[7]=(cnt>>24)&0xFF;
 
-            /* 使用 AUTOSAR 标准 PduInfoType (即 N-PDU) */
             PduInfoType txPdu = {
                 .SduId      = CANIF_PDU_ID_TX_0x123,
                 .SduLength  = 8U,
@@ -68,26 +65,9 @@ int main(void)
             else            PINS_DRV_SetPins(PTD, 1u<<1);
         }
 
-        /* ================================================================
-         *  RX: Can_Read() → CanIf_RxIndication(PduId, &pduInfo) → CanIf 内部处理
-         *  AUTOSAR 标准: CanIf_RxIndication 使用 PduId + PduInfoType*
-         * ================================================================ */
-        {
-            Can_PduType rxCanPdu;
-            if(Can_Read(0, RX_MB, &rxCanPdu)==STATUS_SUCCESS)
-            {
-                CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxCanPdu.id);
-                if (pduId < CANIF_PDU_COUNT) {
-                    /* 使用 AUTOSAR 标准 PduInfoType */
-                    PduInfoType rxPdu = {
-                        .SduId      = pduId,
-                        .SduLength  = rxCanPdu.length,
-                        .SduDataPtr = rxCanPdu.data,
-                    };
-                    CanIf_RxIndication(pduId, &rxPdu);
-                }
-                PINS_DRV_TogglePins(PTD, 1u<<16);
-            }
+        /* RX: ISR 标记就绪 → Can_MainFunctionRx 消费 → CanIf_RxIndication */
+        if (Can_MainFunctionRx()) {
+            PINS_DRV_TogglePins(PTD, 1u << 16);  /* 蓝=收到帧 */
         }
 
         cnt++; delay_ms(500);

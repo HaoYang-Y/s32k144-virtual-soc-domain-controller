@@ -15,6 +15,8 @@
 #include "can_pal.h"
 #include "can_pal_mapping.h"
 #include "can_pal_cfg.h"
+#include "CanIf.h"
+#include "CanIf_PduId.h"
 #include <stddef.h>
 
 /* ===================================================================
@@ -250,4 +252,68 @@ Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
     }
     *ModePtr = Can_State[Controller];
     return E_OK;
+}
+
+/* ===================================================================
+ *  中断模式 — ISR 回调 + 武装 RX MB
+ * =================================================================== */
+
+/* RX MB 数据接收缓冲区（必须静态 — ISR 写入，不能是栈变量） */
+static can_message_t Can_RxMsgBuf[8];  /* 最多 8 个 RX MB */
+static volatile bool   Can_RxPending[8];
+
+static void Can_IrqCallback(uint32_t instance, can_event_t eventType,
+                             uint32_t buffIdx, void *driverState)
+{
+    (void)instance;
+    (void)driverState;
+
+    if (eventType == CAN_EVENT_RX_COMPLETE) {
+        /* 标记数据就绪，延迟到主循环处理（避免 ISR 中调用 CanIf） */
+        if (buffIdx < 8U) {
+            Can_RxPending[buffIdx] = true;
+        }
+    }
+    /* TX 完成 — 预留 Can_TxConfirmation */
+}
+
+void Can_EnableInterrupts(void)
+{
+    (void)CAN_InstallEventCallback(&Can_Instance, Can_IrqCallback, NULL);
+
+    for (uint8_t i = 0U; i < Can_RxCount; i++) {
+        uint8_t mb_idx = Can_TxCount + i;
+        Can_RxMsgBuf[mb_idx].cs = 0U;
+        Can_RxPending[mb_idx] = false;
+        (void)CAN_Receive(&Can_Instance, mb_idx, &Can_RxMsgBuf[mb_idx]);
+    }
+}
+
+/* 主循环调用: 检查 ISR 是否有新帧，有则转发给 CanIf，返回是否处理了帧 */
+bool Can_MainFunctionRx(void)
+{
+    bool got_frame = false;
+    for (uint8_t i = 0U; i < Can_RxCount; i++) {
+        uint8_t mb_idx = Can_TxCount + i;
+        if (Can_RxPending[mb_idx]) {
+            Can_RxPending[mb_idx] = false;
+            got_frame = true;
+
+            can_message_t *rx = &Can_RxMsgBuf[mb_idx];
+            CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rx->id);
+            if (pduId < CANIF_PDU_COUNT) {
+                PduInfoType rxPdu = {
+                    .SduId      = pduId,
+                    .SduLength  = rx->length,
+                    .SduDataPtr = rx->data,
+                };
+                CanIf_RxIndication(pduId, &rxPdu);
+            }
+
+            /* 重新武装此 MB */
+            Can_RxMsgBuf[mb_idx].cs = 0U;
+            (void)CAN_Receive(&Can_Instance, mb_idx, &Can_RxMsgBuf[mb_idx]);
+        }
+    }
+    return got_frame;
 }

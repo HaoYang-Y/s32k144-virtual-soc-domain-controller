@@ -276,18 +276,17 @@ RX 方向是 TX 的逆过程。
 **第 1 步：MCAL 收到一帧**
 
 ```c
-// main.c 轮询 MCAL
-Can_PduType rxCanPdu;
-if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
-    // rxCanPdu.id     = 0x100  ← 硬件收到的 CAN ID
-    // rxCanPdu.length = 8
-    // rxCanPdu.data   = {...}   ← 定长数组
+// Can_MainFunctionRx() 内部（Can.c）— 从静态 buffer 读已收到的帧
+// Can_PduType rx;   ← 从 Can_RxMsgBuf[mb] 读取，由 ISR 填入
+// rx.id     = 0x100 ← 硬件收到的 CAN ID
+// rx.length = 8
+// rx.data   = {...} ← 定长数组
 ```
 
 **第 2 步：CAN ID → PDU ID 反查**
 
 ```c
-    // main.c — 把 CAN ID 翻译成 PDU ID
+// Can_MainFunctionRx() 内部 — 把 CAN ID 翻译成 PDU ID
     CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxCanPdu.id);
     // 0x100 → 查 CanIf_PduConfig[] → 找到 PDU 1
 ```
@@ -312,7 +311,7 @@ if (Can_Read(0, 1, &rxCanPdu) == STATUS_SUCCESS) {
 |--|---------------------|------------------------|
 | 数据方向 | 上层 → CanIf → MCAL | MCAL → CanIf → 上层 |
 | 数据拷贝 | **需要拷贝**（逐字节） | **零拷贝**（直接传指针） |
-| 原因 | 上层缓冲区可能在 `CanIf_Transmit` 返回后释放 | `Can_PduType.data[8]` 在 `Can_Read` 的调用栈上，生命周期覆盖整个处理过程 |
+| 原因 | 上层缓冲区可能在 `CanIf_Transmit` 返回后释放 | `Can_RxMsgBuf[]` 为静态 buffer，ISR 写入 → 主循环消费，生命周期永久 |
 | ID 转换 | PDU ID → CAN ID（查 `pdu_id` 字段） | CAN ID → PDU ID（查 `can_id` 字段） |
 
 ---
@@ -413,20 +412,16 @@ void CanIf_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
 
 > **AUTOSAR 规范定义**：CAN 驱动收到一帧数据后，通过此函数向 CanIf 层通知。CanIf 校验 PDU ID 合法性后，将数据转发给 PduR 层。
 
-**调用方**：当前由 `main.c` 的轮询循环调用（未来由中断服务调用）：
+**调用方**：当前由 `Can_MainFunctionRx()` 内部调用（ISR 标记 → 主循环消费）：
 
 ```c
-// main.c 中的 RX 轮询
-Can_PduType rxCanPdu;
-if (Can_Read(0, RX_MB, &rxCanPdu) == STATUS_SUCCESS) {
-    // CAN ID → PDU ID 转换（CanIf 层职责）
-    CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxCanPdu.id);
-    if (pduId < CANIF_PDU_COUNT) {
-        PduInfoType rxPdu = {
-            .SduId = pduId, .SduLength = rxCanPdu.length, .SduDataPtr = rxCanPdu.data
-        };
-        CanIf_RxIndication(pduId, &rxPdu);   // ← 通知 CanIf 层
-    }
+// Can_MainFunctionRx() 内部（Can.c）— ISR 标记 + 主循环消费
+CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rxMsgBuf->id);
+if (pduId < CANIF_PDU_COUNT) {
+    PduInfoType rxPdu = {
+        .SduId = pduId, .SduLength = rxMsgBuf->length, .SduDataPtr = rxMsgBuf->data
+    };
+    CanIf_RxIndication(pduId, &rxPdu);   // ← 通知 CanIf 层
 }
 ```
 
@@ -452,7 +447,7 @@ void CanIf_TxConfirmation(PduIdType TxPduId);
 CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 ```
 
-RX 路径专用辅助函数。轮询收到 `Can_PduType`（含 CAN ID 0x100）后，查表找到对应的 PDU ID (=1)。线性扫描 `CanIf_PduConfig[]`，匹配 `can_id` 字段。未找到时返回 `CANIF_PDU_COUNT`。
+RX 路径专用辅助函数。ISR 将帧写入静态 `Can_RxMsgBuf[]` 后，`Can_MainFunctionRx()` 调用此函数，按 CAN ID 查表找到对应的 PDU ID (=1)。线性扫描 `CanIf_PduConfig[]`，匹配 `can_id` 字段。未找到时返回 `CANIF_PDU_COUNT`。
 
 **为什么需要这个函数？** 因为硬件给的是一帧带 CAN ID 的裸数据，但 CanIf 层的上层（PduR）需要的是 PDU ID。这个函数做的就是 CAN 层→CanIf 层的"翻译"。
 
@@ -487,7 +482,7 @@ LOG_E("CanIf", "Transmit: not initialized (Mod=0x32 Api=0x01 Err=0x02)")
 
 **TX**: `main.c → CanIf_Transmit() → 查表(PDU→CAN ID) → Can_Write() → 硬件`
 
-**RX**: `硬件 → Can_Read() → CanIf_FindPduIdByCanId(CAN ID→PDU) → CanIf_RxIndication()`
+**RX**: `硬件 ISR → Can_RxMsgBuf → Can_MainFunctionRx → CanIf_FindPduIdByCanId → CanIf_RxIndication`
 
 ---
 

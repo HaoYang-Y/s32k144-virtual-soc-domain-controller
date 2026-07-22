@@ -136,4 +136,7 @@ Std_ReturnType Can_GetControllerErrorState(Can_ControllerType  Controller,
 Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
                                      Can_ControllerStateType *ModePtr);
 
+void Can_EnableInterrupts(void);
+bool Can_MainFunctionRx(void);
+
 #endif /* MCAL_CAN_H_ */

@@ -124,9 +124,12 @@ void CanIf_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
         return;
     }
 
+    /* LOG_D 在 ISR 上下文中调用会阻塞 UART — 需要调试时手动开启 */
+#if 0
     LOG_D("CanIf", "RX PDU %u (CAN 0x%lX), len=%u",
           (unsigned int)RxPduId, (unsigned long)cfg->can_id,
           (unsigned int)PduInfoPtr->SduLength);
+#endif
 
     /* TODO: Step 2 — 转发给 PduR_CanIfRxIndication(RxPduId, PduInfoPtr) */
 }

@@ -225,107 +225,86 @@ Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
 
 AUTOSAR SWS_Can 规范定义了 CAN 驱动的两种运行模式，区别在于**谁来触发收发动作**：
 
-### 4.1 轮询模式（Polling）— 当前使用
+### 4.1 轮询模式（Polling）— 已废弃
 
 ```
-main() 循环:
+main() 循环:                              ← 旧实现（已移除）
   │
-  ├── Can_Write(MB0, &tx)        ← 主动调用，立即提交到硬件
-  │
-  ├── Can_Read(0, MB1, &rx)      ← 主动调用，当场检查"有没有新帧？"
-  │     有 → 返回数据
-  │     无 → 返回 STATUS_ERROR
-  │
+  ├── Can_Write(MB0, &tx)                 ← TX OK，保留
+  ├── Can_Read(0, MB1, &rx)               ← ❌ 500ms 轮询，98% 丢帧
   └── delay_ms(500)
 ```
 
-**特点**：CPU 自己周期性地去"敲门问有没有新数据"。简单直接，但有两个问题：
+轮询模式简单但有致命缺点：CPU 空转 + 高频丢帧。已被中断模式取代。
 
-1. **CPU 空转**：两帧之间 CPU 在 delay 中什么也不干
-2. **丢帧风险**：如果一帧到达后、下次 `Can_Read` 前又有新帧覆盖了 MB，第一帧就丢了
-
-### 4.2 中断模式（Interrupt）— AUTOSAR 推荐
+### 4.2 中断模式（Interrupt）— 当前实现 ✅
 
 ```
 硬件中断触发:
-  CAN 帧到达 MB → 硬件触发 CAN0_ORed_0_15_MB_IRQHandler
+  CAN 帧到达 MB → CAN0_ORed_0_15_MB_IRQHandler
     │
-    ├── FLEXCAN_IRQHandler(0)     ← NXP SDK ISR，扫描所有 MB
+    ├── FLEXCAN_IRQHandler(0)     ← NXP SDK ISR
     │      │
-    │      └── 回调: Can_IrqCallback(RX_COMPLETE, mb_idx)
+    │      └── Can_IrqCallback(RX_COMPLETE, mb_idx)  ← ISR 中只设 flag
     │             │
-    │             ├── Can_Read(0, mb_idx, &rx)   ← 在 ISR 中读数据
-    │             └── CanIf_RxIndication(&rx)     ← 通知上层
+    │             └── Can_RxPending[mb_idx] = true    ← 不做耗时操作
     │
-    └── 重新武装 RX MB（准备收下一帧）
+    └── FLEXCAN_CompleteTransfer → 关闭 MB 中断（需要重新武装）
 
 main() 循环:
   │
-  ├── Can_Write(MB0, &tx)        ← TX 不变（本来异步）
-  │
-  └── Can_MainFunctionRead()     ← AUTOSAR 要求周期性调，处理 ISR 缓冲的数据
+  ├── CanIf_Transmit(...)          ← TX 不变
+  ├── Can_MainFunctionRx()        ← 检查 Can_RxPending
+  │      ├── 读 Can_RxMsgBuf[mb]   ← 静态 buffer（ISR 填入数据）
+  │      ├── CanIf_RxIndication()  ← 通知上层
+  │      └── CAN_Receive()         ← 重新武装 MB
+  └── delay_ms(500)
 ```
 
-**特点**：
-
-1. **零延迟响应**：帧到达后硬件立即触发 ISR，不依赖 CPU 轮询间隔
-2. **不丢帧**：ISR 第一时间读出数据，MB 立即重新武装
-3. **AUTOSAR 标准模式**：规范要求 `Can_MainFunctionRead/Write` 作为周期任务运行
+**关键设计**：
+1. ISR 回调**只设 flag**，不调用任何复杂函数（避免阻塞 UART/栈溢出）
+2. 数据接收用**静态 `can_message_t` buffer**（不能是栈变量——ISR 写入到函数返回后栈已释放，会破坏内存）
+3. `Can_MainFunctionRx()` 在主循环中消费 flag → 读 buffer → 转发 CanIf → 重新武装
 
 ### 4.3 两种模式对比
 
-| | 轮询 | 中断 |
+| | 轮询（已废弃） | 中断（当前） |
 |--|------|------|
 | 触发方式 | CPU 周期性检查 | 硬件自动触发 ISR |
 | CPU 效率 | 低（空转等待） | 高（ISR 只在有数据时运行） |
 | 实时性 | 取决于轮询间隔 | 微秒级响应 |
-| 丢帧风险 | 有（两帧间隔 < 轮询间隔） | 极低（ISR 及时读出） |
+| 丢帧风险 | 有（两帧间隔 < 轮询间隔） | 极低（ISR 及时读出，静态 buffer 可靠） |
 | AUTOSAR 规范 | 允许，但不推荐 | 推荐（SWS_Can_00047/00048） |
-| 实现复杂度 | 简单 | 需要安装回调 + 武装 MB + ISR 安全 |
-| 本项目状态 | ✅ 已实现（main.c while 循环） | ⬜ 方案已定（见 [中断模式迁移方案](./中断模式迁移方案.md)） |
+| 本项目状态 | ❌ 已移除 | ✅ 已实现 |
 
-### 4.4 AUTOSAR 的中断模式 API
-
-规范定义了三个用于中断模式的函数（本项目待实现）：
+### 4.4 中断模式 API（已实现）
 
 ```c
-// SWS_Can_00047: 周期调用，处理 TX 完成确认
-void Can_MainFunctionWrite(void);
+// 初始化: 安装回调 + 武装所有 RX MB（在 EcuM_Init 之后调用）
+void Can_EnableInterrupts(void);
 
-// SWS_Can_00048: 周期调用，处理 ISR 缓冲的 RX 数据
-void Can_MainFunctionRead(void);
-
-// SWS_Can_00046: 启用/禁用特定 MB 的中断（AUTOSAR 标准 API）
-void Can_EnableCanInterrupts(uint8_t Controller, uint8_t Hoh);
-
-// 注意：本项目计划用 Can_EnableInterrupts() 封装上述标准 API，
-// 内部调用 CAN_InstallEventCallback + 武装 RX MB。详见中断迁移方案。
-```
+// 周期调用: 检查 ISR 是否有新帧，有则转发 CanIf + 重新武装
+bool Can_MainFunctionRx(void);
 ```
 
-**AUTOSAR 典型中断收发流程**：
+**初始化流程**：
 
 ```
-初始化:
-  Can_Init() → Can_SetControllerMode(STARTED) → Can_EnableInterrupts()
-  → 安装回调 → 武装 RX MB → 使能 NVIC
-
-运行时:
-  ┌─ ISR 上下文 ─────────────────────────────┐
-  │ 帧到达 → FLEXCAN_IRQHandler → 回调        │
-  │   → 读 MB 数据 → 存到软件 FIFO            │
-  │   → CanIf_RxIndication(PDU_ID, &data)     │
-  │   → 重新武装 MB                            │
-  └──────────────────────────────────────────┘
-
-  ┌─ main() 循环 ────────────────────────────┐
-  │ Can_MainFunctionRead()  ← 处理软件 FIFO   │
-  │ Can_MainFunctionWrite() ← 处理 TX 确认    │
-  │ ... 业务逻辑 ...                           │
-  └──────────────────────────────────────────┘
+main.c                            Can.c
+  │                                 │
+  ├─ EcuM_Init()                    │
+  │   ├─ Can_Init(&Can_Config)      │
+  │   ├─ Can_SetControllerMode()    │
+  │   └─ CanIf_Init()               │
+  │                                 │
+  ├─ Can_EnableInterrupts() ──────→ ├─ CAN_InstallEventCallback(Can_IrqCallback)
+  │                                 ├─ 遍历 RX MB: CAN_Receive 武装
+  │                                 │
+  for(;;) {                         │
+    CanIf_Transmit()  // TX          │
+    Can_MainFunctionRx() ─────────→ │  检查 Can_RxPending[] → 读数据 → CanIf → CAN_Receive
+  }                                 │
 ```
-
-> **当前状态**：本项目第 4.2/4.3 节的 `Can_Write`/`Can_Read` 是**轮询模式**的实现。中断模式的详细迁移方案见 [中断模式迁移方案](./中断模式迁移方案.md)。
 
 ---
 
@@ -524,13 +503,15 @@ Can_Read(Controller=0, Hrh=1, &rxPdu)
            for i: PduInfo->data[i] = rx_msg.data[i]
 ```
 
-**调用示例**（轮询模式）：
+**调用方式**（中断模式）：
 
 ```c
-Can_PduType rx = {0};
-if (Can_Read(0, 1, &rx) == STATUS_SUCCESS) {
-    // 有新帧！rx.id 是 CAN ID, rx.data[0..7] 是载荷
-    // 注意：这是纯轮询模式，AUTOSAR 完整方案应该用中断 + Can_MainFunctionRead
+// 中断模式下不再由 main 循环直接调 Can_Read。
+// 改由 Can_MainFunctionRx() 内部读取：ISR 已将数据写入静态 buffer，
+// 主循环中 Can_MainFunctionRx 检查 flag → 读 buffer → 转发 CanIf。
+
+if (Can_MainFunctionRx()) {
+    // 有帧被处理（ISR 标记 → 主循环消费 → CanIf_RxIndication）
 }
 ```
 
@@ -686,5 +667,5 @@ Can (本文) ──→ CanIf (3_CanIf_CAN接口层详解.md) ──→ PduR ─�
 调用关系：
 
 - **Can_Write()** ← 当前被 `CanIf_Transmit()` 调用（[3_CanIf_CAN接口层详解.md](./3_CanIf_CAN接口层详解.md) 第 4.2 节）
-- **Can_Read()** ← 当前在 `main.c` 中轮询，结果转发给 `CanIf_RxIndication()`
+- **Can_Read()** ← 由 `Can_MainFunctionRx()` 内部调用，不再由 main 循环直接轮询
 - **Can_Init()** ← 已迁移到 `EcuM_Init()` 中统一调度，配置数据在 `Can_Cfg.c` 中定义（`extern const Can_ConfigType Can_Config`）
