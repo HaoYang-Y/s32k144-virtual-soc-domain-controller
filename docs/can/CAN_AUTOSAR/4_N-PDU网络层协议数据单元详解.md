@@ -10,7 +10,8 @@
 |----------|------|
 | AUTOSAR 五层全景（CanTp/CanIf 在整个架构中的位置） | [1_AUTOSAR_CP_CAN通信栈.md](./1_AUTOSAR_CP_CAN通信栈.md) |
 | CanIf 层（PDU ID 概念、PDU→CAN ID 查表） | [3_CanIf_CAN接口层详解.md](./3_CanIf_CAN接口层详解.md) |
-| CAN TP 协议基础（ISO 15765-2，知道 SF/FF/CF/FC 就行） | 本文 §3 有速查 |
+
+> 不需要预先知道 CAN TP 协议——本文 §3 会从零介绍 PCI 和四种帧类型。它们的完整交互逻辑（FC 流控、状态机）在 [第 5 篇](./5_CanTp_CAN传输层详解.md) 展开。
 
 ---
 

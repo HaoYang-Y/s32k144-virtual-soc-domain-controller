@@ -191,22 +191,32 @@ void EcuM_Init(void)
 ```
 main() 启动
   │
-  ├─ 1. CLOCK_DRV_Init()       ← 时钟（最底层，先配）
-  ├─ 2. Port_Init()            ← 引脚复用（MCAL）
-  │
-  ├─ 3. EcuM_Init()            ← ★ EcuM 接管，统一调度后续所有初始化
-  │      ├─ Can_Init(&Can_Config)  ← MCAL 层 (配置在 Can_Cfg.c)
-  │      ├─ Can_SetControllerMode(STARTED)
-  │      ├─ CanIf_Init()       ← ECU Abstraction 层
-  │      ├─ (TODO) SpiIf_Init()
-  │      ├─ (TODO) PduR_Init() ← Services 层
-  │      ├─ (TODO) Com_Init()
-  │      └─ (TODO) Rte_Init()  ← RTE 层
-  │
-  └─ 6. while(1) { 业务逻辑 }  ← RUN 状态
+  └─ EcuM_Init()               ← ★ EcuM 接管一切，main.c 不碰任何 MCAL
+         │
+         ├─ CLOCK_DRV_Init()    ← 硬件前置: 时钟（最底层，先配）
+         ├─ Port_Init()         ← 硬件前置: 引脚复用
+         │
+         ├─ Can_Init(&Can_Config)  ← MCAL 层 (配置在 Can_Cfg.c)
+         ├─ Can_SetControllerMode(STARTED)
+         ├─ Can_EnableInterrupts()  ← RX 中断模式使能
+         │
+         ├─ CanIf_Init()        ← ECU Abstraction 层
+         ├─ (TODO) SpiIf_Init()
+         │
+         ├─ PduR_Init()         ← Services 层
+         ├─ CanTp_Init()
+         ├─ (TODO) Com_Init()
+         │
+         └─ (TODO) Rte_Init()   ← RTE 层
+         → 进入 ECUM_STATE_RUN
+
+main() while(1):
+  └─ EcuM_MainFunction()
+       ├─ CanTp_MainFunction()  ← 驱动 CAN TP 流控状态机
+       └─ Can_MainFunctionRx()  ← 消费 CAN RX 中断数据
 ```
 
-**关键设计决策**：`Can_Init()` 已迁移到 `EcuM_Init()` 中统一调度。CAN 硬件配置（`Can_Config`）定义在 `Can_Cfg.c` 中，通过 `Can_Cfg.h` 以 `extern` 方式暴露给 EcuM 引用。main.c 不再直接接触任何 MCAL 初始化，只调 `EcuM_Init()`。
+**关键设计决策**：`CLOCK_DRV_Init`、`Port_Init`、`Can_Init`、`Can_EnableInterrupts` 全部在 `EcuM_Init()` 中统一调度。main.c 只调 `EcuM_Init()` + `EcuM_MainFunction()`，不包含任何 MCAL 头文件。CAN 硬件配置（`Can_Config`）定义在 `Can_Cfg.c` 中，通过 `Can_Cfg.h` 以 `extern` 方式暴露给 EcuM 引用。
 
 ---
 
@@ -224,11 +234,11 @@ main() 启动
 
 ### 4.2 运行管理 (Run)
 
-ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（类似于一个后台任务），负责：
+ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1kHz），负责驱动所有 BSW 模块的周期处理：
 
-- 监控是否有休眠请求
-- 监控是否有关机请求
-- 协调 BswM（模式管理器）进行模式切换
+- **CanTp_MainFunction()**：驱动 CAN TP 流控状态机（WAIT_FC 超时 / SENDING_CF 按 STmin/BS 节奏发 CF / RECEIVING 超时）
+- **Can_MainFunctionRx()**：消费 CAN RX 中断数据（ISR 标记 → 读 frame → CanIf → PduR → CanTp 重组），返回 `true` 表示本轮有帧被处理
+- （后续）监控休眠/关机请求，协调 BswM 模式切换
 
 ### 4.3 关机管理 (Shutdown)
 
@@ -324,7 +334,7 @@ ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（类
 | `EcuM_Init()` — BSW 初始化调度 | ✅ | [EcuM.c](../../mcu/Services/EcuM/src/EcuM.c) |
 | `CanIf_Init()` 集成 | ✅ | EcuM_Init() 中调用 |
 | `EcuM_SetState()` | ✅ | 状态切换 API |
-| `EcuM_MainFunction()` | 🟡 骨架 | 函数已定义，状态机待实现 |
+| `EcuM_MainFunction()` | ✅ 已实现 | 驱动 CanTp 状态机 + CAN RX 消费 |
 | `EcuM_SelectShutdownTarget()` | 🟡 骨架 | 函数已定义，逻辑待实现 |
 
 ### 演进路线（跟着项目推进自然扩展）

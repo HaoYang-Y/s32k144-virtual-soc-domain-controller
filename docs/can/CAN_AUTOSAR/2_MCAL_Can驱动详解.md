@@ -251,14 +251,17 @@ main() 循环:                              ← 旧实现（已移除）
     │
     └── FLEXCAN_CompleteTransfer → 关闭 MB 中断（需要重新武装）
 
-main() 循环:
+main() 循环 (通过 EcuM_MainFunction):
   │
-  ├── CanIf_Transmit(...)          ← TX 不变
-  ├── Can_MainFunctionRx()        ← 检查 Can_RxPending
-  │      ├── 读 Can_RxMsgBuf[mb]   ← 静态 buffer（ISR 填入数据）
-  │      ├── CanIf_RxIndication()  ← 通知上层
-  │      └── CAN_Receive()         ← 重新武装 MB
-  └── delay_ms(500)
+  ├── EcuM_MainFunction()
+  │      ├── CanTp_MainFunction()     ← 驱动 CAN TP 流控状态机
+  │      └── Can_MainFunctionRx()     ← 检查 Can_RxPending
+  │             ├── 读 Can_RxMsgBuf[mb]   ← 静态 buffer（ISR 填入数据）
+  │             ├── CanIf_RxIndication()  ← 通知上层
+  │             └── CAN_Receive()         ← 重新武装 MB
+  │
+  ├── CanTp_Transmit(...)             ← TX 经 CanTp 发送 (~2 Hz 分频)
+  └── nop 轻量延迟 (~1ms)             ← 保证 ~1kHz MainFunction 轮询
 ```
 
 **关键设计**：
@@ -287,23 +290,24 @@ void Can_EnableInterrupts(void);
 bool Can_MainFunctionRx(void);
 ```
 
-**初始化流程**：
+**初始化流程**（全部由 EcuM 统一调度，main.c 不直接接触 Can API）：
 
 ```
-main.c                            Can.c
+EcuM_Init()                        Can.c
   │                                 │
-  ├─ EcuM_Init()                    │
-  │   ├─ Can_Init(&Can_Config)      │
-  │   ├─ Can_SetControllerMode()    │
-  │   └─ CanIf_Init()               │
-  │                                 │
+  ├─ CLOCK_DRV_Init()               │
+  ├─ Port_Init()                    │
+  ├─ Can_Init(&Can_Config) ──────→  │  初始化 FlexCAN 硬件 + Mailbox 配置
+  ├─ Can_SetControllerMode()        │
   ├─ Can_EnableInterrupts() ──────→ ├─ CAN_InstallEventCallback(Can_IrqCallback)
   │                                 ├─ 遍历 RX MB: CAN_Receive 武装
-  │                                 │
-  for(;;) {                         │
-    CanIf_Transmit()  // TX          │
-    Can_MainFunctionRx() ─────────→ │  检查 Can_RxPending[] → 读数据 → CanIf → CAN_Receive
-  }                                 │
+  ├─ CanIf_Init()                   │
+  ├─ PduR_Init()                    │
+  └─ CanTp_Init()                   │
+
+EcuM_MainFunction() (main 循环 ~1kHz 调用):
+  ├─ CanTp_MainFunction()  ← 驱动 CAN TP 流控状态机
+  └─ Can_MainFunctionRx()  ← 检查 Can_RxPending[] → 读数据 → CanIf → CAN_Receive
 ```
 
 ---

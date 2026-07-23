@@ -66,6 +66,16 @@ void CanTp_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
  */
 void CanTp_TxConfirmation(PduIdType TxPduId);
 
+/**
+ * @brief CanTp 周期处理函数 (AUTOSAR MainFunction)
+ *
+ * @note  由 EcuM_MainFunction 周期调用，驱动:
+ *        - TX 多帧 FC 流控状态机 (WAIT_FC → SENDING_CF → IDLE)
+ *        - RX 重组超时检测 (N_Cr)
+ *        - 定时器精度取决于 Log_GetTimeMs() (ARM DWT, 1ms)
+ */
+void CanTp_MainFunction(void);
+
 /* ===================================================================
  *  PCI 编解码 (内部使用，但暴露给测试)
  * =================================================================== */

@@ -5,6 +5,32 @@
 
 ---
 
+## 阅读前你需要知道
+
+本文是五篇 CAN AUTOSAR 系列的总纲。假设你：
+
+- 知道 CAN 总线的基本概念（差分线、帧结构、ID + DLC + 最多 8 字节数据）
+- 有 C 语言基础（结构体、指针、函数指针）
+- 如果用 S32K144 开发板实操，需要知道如何编译和烧录
+
+如果对 CAN 协议本身不熟，先看 [CAN 原理系列](../CAN原理/)。
+
+本文用到的缩写会在正文**首次出现时**解释，也可以在下面快速查阅。
+
+
+## 下一步读什么
+
+读完本文后，按以下顺序继续：
+
+| 序号 | 文档 | 内容 |
+|------|------|------|
+| 2 | [MCAL Can 驱动详解](./2_MCAL_Can驱动详解.md) | 最底层——硬件怎么收发帧 |
+| 3 | [CanIf CAN 接口层详解](./3_CanIf_CAN接口层详解.md) | PDU ID 抽象——上层不再关心 CAN ID |
+| 4 | [N-PDU 详解](./4_N-PDU网络层协议数据单元详解.md) | 核心概念——I-PDU/N-PDU/L-PDU 的区别 |
+| 5 | [CanTp CAN 传输层详解](./5_CanTp_CAN传输层详解.md) | 传输协议——大块数据的分段、重组、流控 |
+
+---
+
 ## 1. 整体架构：分层模型
 
 AUTOSAR CP 将 CAN 通信拆分为多个层次，从应用信号到物理总线逐层向下：
@@ -413,30 +439,26 @@ SWC/App
 
 ### 4.2 当前实际使用的数据路径
 
-`main.c` → `PduInfoType` (N-PDU) → `CanIf_Transmit(PduId, &pduInfo)` → `Can_Write(Hth, &canPdu)`：
+> **RX 模式**：已经从轮询升级为**中断驱动**（`Can_EnableInterrupts` → ISR 标记 → `Can_MainFunctionRx` 在主循环消费）。不再直接调用 `Can_Read()`。详见 [2_MCAL_Can驱动详解 section 4](./2_MCAL_Can驱动详解.md)。
+
+`main.c` 的核心循环（简化版，完整代码见 `main.c`）：
 
 ```c
-// mcu/App/Swc_SignalGateway/src/main.c — AUTOSAR 标准数据流
-// BSW 初始化: EcuM_Init() → Can→CanIf→PduR→CanTp
+// BSW 初始化: EcuM_Init() → Can → CanIf → PduR → CanTp
+// CAN RX: 中断驱动 (Can_EnableInterrupts + Can_MainFunctionRx)
 
 for (;;) {
-    // TX: AUTOSAR 标准 PduInfoType (即 N-PDU)
-    PduInfoType txPdu = {
-        .SduId = CANIF_PDU_ID_TX_0x123, .SduLength = 8U, .SduDataPtr = txData
-    };
-    CanIf_Transmit(CANIF_PDU_ID_TX_0x123, &txPdu);
+    // BSW 周期处理: 驱动 CanTp 流控状态机
+    EcuM_MainFunction();
 
-    // RX: Can_Read → CanIf_FindPduIdByCanId → CanIf_RxIndication
-    Can_PduType rx;
-    if (Can_Read(0, RX_MB, &rx) == STATUS_SUCCESS) {
-        pduId = CanIf_FindPduIdByCanId(rx.id);
-        PduInfoType rxPdu = {
-            .SduId = pduId, .SduLength = rx.length, .SduDataPtr = rx.data
-        };
-        CanIf_RxIndication(pduId, &rxPdu);
+    // TX: CanTp_Transmit → SF(≤7B) 或 MF(>7B, FF→FC→CF)
+    PduInfoType txPdu = { .SduId = 0U, .SduLength = dataLen, .SduDataPtr = txData };
+    CanTp_Transmit(0U, &txPdu);
+
+    // RX: ISR 标记 → Can_MainFunctionRx → CanIf → PduR → CanTp (重组)
+    if (Can_MainFunctionRx()) {
+        // CAN 帧已通过 CanIf → PduR → CanTp 进入重组状态机
     }
-```
-    cnt++; delay_ms(500);
 }
 ```
 

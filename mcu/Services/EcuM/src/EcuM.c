@@ -8,6 +8,8 @@
  */
 
 #include "EcuM.h"
+#include "Port.h"
+#include "clock_config.h"
 #include "Can.h"
 #include "Can_Cfg.h"
 #include "CanIf.h"
@@ -27,11 +29,16 @@ void EcuM_Init(void)
      *  自底向上: MCAL → ECU Abstraction → Services → RTE
      * ================================================================ */
 
+    /* --- 硬件前置: 时钟 + 引脚复用 (必须在所有 MCAL 模块之前) --- */
+    CLOCK_DRV_Init(&clockMan1_InitConfig0);
+    Port_Init();
+
     /* --- MCAL 层 --- */
     if (Can_Init(&Can_Config) != E_OK) {
         return;
     }
     (void)Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+    Can_EnableInterrupts();  /* RX 中断模式 */
 
     /* --- ECU Abstraction 层 --- */
     CanIf_Init();
@@ -48,9 +55,14 @@ void EcuM_Init(void)
     EcuM_State = ECUM_STATE_RUN;
 }
 
-void EcuM_MainFunction(void)
+bool EcuM_MainFunction(void)
 {
-    /* TODO: 运行状态机 — 处理睡眠/唤醒请求等 */
+    /* 驱动 CAN Transport Layer 流控状态机 (FF → FC → CF) */
+    CanTp_MainFunction();
+
+    /* RX: ISR 标记 → 消费 CAN 帧 → CanIf → PduR → CanTp 重组
+     * 返回 true 表示本轮有帧被处理 (供上层点灯等调试用途) */
+    return Can_MainFunctionRx();
 }
 
 void EcuM_SelectShutdownTarget(void)

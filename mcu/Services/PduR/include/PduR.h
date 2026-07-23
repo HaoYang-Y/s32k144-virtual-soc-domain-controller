@@ -22,6 +22,9 @@ Std_ReturnType PduR_ComTransmit(PduIdType PduId, const PduInfoType *PduInfoPtr);
 /** @brief CanIf → PduR → Com 接收指示 */
 void           PduR_CanIfRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
 
+/** @brief CanTp → PduR → Com: CanTp 重组完成后的 I-PDU 向上交付 */
+void           PduR_CanTpRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
+
 /** @brief CanIf → PduR → Com 发送确认 */
 void           PduR_CanIfTxConfirmation(PduIdType TxPduId);
 

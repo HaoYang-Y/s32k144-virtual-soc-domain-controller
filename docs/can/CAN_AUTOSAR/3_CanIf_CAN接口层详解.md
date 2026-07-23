@@ -70,6 +70,8 @@ typedef struct {
 
 与 MCAL `Can_PduType` 的对比：
 
+> **N-PDU 是什么？** 简而言之：`PduInfoType` 在 CanTp ↔ CanIf 之间传输时扮演的角色就叫 N-PDU。它不是什么新类型——就是同一个 `PduInfoType`。完整的解释（包括 I-PDU/N-PDU/L-PDU 的关系）见 [第 4 篇](./4_N-PDU网络层协议数据单元详解.md)。
+
 | | Can_PduType (MCAL — L-PDU) | PduInfoType (CanIf — N-PDU 角色) |
 |--|---------------------------|----------------------------------|
 | ID 字段 | `Can_IdType id` = CAN 报文 ID (如 0x123) | `PduIdType SduId` = PDU 逻辑编号 (如 0) |

@@ -17,6 +17,7 @@
 #include "CanIf_Cfg.h"
 #include "CanIf_PduId.h"
 #include "Can.h"
+#include "PduR.h"
 #include "Log.h"
 
 /* ===================================================================
@@ -131,7 +132,8 @@ void CanIf_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
           (unsigned int)PduInfoPtr->SduLength);
 #endif
 
-    /* TODO: Step 2 — 转发给 PduR_CanIfRxIndication(RxPduId, PduInfoPtr) */
+    /* 转发给 PduR → CanTp 进行 N-PDU 重组 */
+    PduR_CanIfRxIndication(RxPduId, PduInfoPtr);
 }
 
 void CanIf_TxConfirmation(PduIdType TxPduId)
@@ -148,7 +150,8 @@ void CanIf_TxConfirmation(PduIdType TxPduId)
 
     LOG_D("CanIf", "TX confirm PDU %u", (unsigned int)TxPduId);
 
-    /* TODO: Step 2 — 转发给 PduR_CanIfTxConfirmation(TxPduId) */
+    /* 转发给 PduR → CanTp 进行流控状态推进 */
+    PduR_CanIfTxConfirmation(TxPduId);
 }
 
 Std_ReturnType CanIf_Transmit(PduIdType TxPduId, const PduInfoType *PduInfoPtr)
