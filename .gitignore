@@ -40,6 +40,9 @@ tools/uart_logger/log/
 # ---- 工具编译产物 ----
 tools/uart_logger/uart_logger
 
+# ---- Claude 配置 / 缓存 ----
+.claude/
+
 # ---- 其他 ----
 .DS_Store
 Thumbs.db
