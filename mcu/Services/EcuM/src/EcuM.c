@@ -55,14 +55,13 @@ void EcuM_Init(void)
     EcuM_State = ECUM_STATE_RUN;
 }
 
-bool EcuM_MainFunction(void)
+void EcuM_MainFunction(void)
 {
     /* 驱动 CAN Transport Layer 流控状态机 (FF → FC → CF) */
     CanTp_MainFunction();
 
-    /* RX: ISR 标记 → 消费 CAN 帧 → CanIf → PduR → CanTp 重组
-     * 返回 true 表示本轮有帧被处理 (供上层点灯等调试用途) */
-    return Can_MainFunctionRx();
+    /* RX: ISR 标记 → 消费 CAN 帧 → CanIf → PduR → CanTp 重组 */
+    (void)Can_MainFunctionRx();
 }
 
 void EcuM_SelectShutdownTarget(void)

@@ -20,7 +20,7 @@ typedef enum {
 } EcuM_StateType;
 
 void EcuM_Init(void);
-bool EcuM_MainFunction(void);  /* 返回 true 表示本轮处理了 RX 数据 */
+void EcuM_MainFunction(void);
 void EcuM_SelectShutdownTarget(void);
 void EcuM_SetState(EcuM_StateType State);
 

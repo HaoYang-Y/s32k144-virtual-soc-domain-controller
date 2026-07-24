@@ -175,7 +175,9 @@ Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo)
     if (PduInfo == NULL)                         return E_NOT_OK;
     if (PduInfo->length > 8U)                    return E_NOT_OK;
 
-    /* 每次发送前重配 TX MB — 清除上次发送残留状态 */
+    /* 每次发送前: 中止挂起的传输 + 重配 TX MB
+     * 无 CAN 收发器/ACK 时 FlexCAN 会一直重传 → MB 锁死 → 必须主动中止 */
+    (void)CAN_AbortTransfer(&Can_Instance, Hth);
     CAN_ConfigTxBuff(&Can_Instance, Hth, &Can_TxBuffCfg);
 
     /* 构造 PAL 消息 */
