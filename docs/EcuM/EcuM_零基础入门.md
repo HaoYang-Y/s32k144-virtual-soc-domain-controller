@@ -163,24 +163,30 @@ void EcuM_Init(void)
      *  自底向上: MCAL → ECU Abstraction → Services → RTE
      * ================================================================ */
 
+    /* --- 硬件前置 --- */
+    CLOCK_DRV_Init(&clockMan1_InitConfig0);  // 时钟（最底层，先配）
+    Port_Init();                              // 引脚复用
+
     /* --- MCAL 层 --- */
-    if (Can_Init(&Can_Config) != STATUS_SUCCESS) {   // 配置在 Can_Cfg.c
-        return;                                      // 配置由 EcuM 统一管理
+    if (Can_Init(&Can_Config) != E_OK) {     // CAN 硬件初始化
+        return;
     }
     Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+    Can_EnableInterrupts();                  // RX 中断模式
 
     /* --- ECU Abstraction 层 --- */
-    CanIf_Init();                    // ← 在这里！MCAL 已就绪，抽象层启动
+    CanIf_Init();               // CAN 接口抽象（屏蔽 CAN ID 等硬件细节）
     /* TODO: SpiIf_Init(); */
 
     /* --- Services 层 --- */
-    /* TODO: PduR_Init(); */        // PduR 依赖 CanIf，所以排在 CanIf 后面
-    /* TODO: Com_Init(); */         // Com 依赖 PduR，所以更靠后
+    PduR_Init();                // PDU 路由（转发 CanIf ↔ CanTp ↔ Com）
+    CanTp_Init();               // CAN 传输层（ISO 15765-2 分段/重组）
+    /* TODO: Com_Init(); */     // 通信服务（信号 ↔ PDU 编解码）
 
     /* --- RTE 层 --- */
-    /* TODO: Rte_Init(); */         // RTE 依赖所有 BSW，放在最后
+    /* TODO: Rte_Init(); */     // 运行时环境（SWC 与 BSW 的胶水层）
 
-    EcuM_State = ECUM_STATE_RUN;     // 全部就绪，切到 RUN 状态
+    EcuM_State = ECUM_STATE_RUN;
 }
 ```
 
@@ -237,7 +243,7 @@ main() while(1):
 ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1kHz），负责驱动所有 BSW 模块的周期处理：
 
 - **CanTp_MainFunction()**：驱动 CAN TP 流控状态机（WAIT_FC 超时 / SENDING_CF 按 STmin/BS 节奏发 CF / RECEIVING 超时）
-- **Can_MainFunctionRx()**：消费 CAN RX 中断数据（ISR 标记 → 读 frame → CanIf → PduR → CanTp 重组），返回 `true` 表示本轮有帧被处理
+- **Can_MainFunctionRx()**：消费 CAN RX 中断数据（ISR 标记 → 读 frame → CanIf → PduR → CanTp 重组）
 - （后续）监控休眠/关机请求，协调 BswM 模式切换
 
 ### 4.3 关机管理 (Shutdown)
@@ -332,20 +338,22 @@ ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1k
 |------|------|---------|
 | 状态枚举定义 | ✅ | [EcuM.h](../../mcu/Services/EcuM/include/EcuM.h) |
 | `EcuM_Init()` — BSW 初始化调度 | ✅ | [EcuM.c](../../mcu/Services/EcuM/src/EcuM.c) |
-| `CanIf_Init()` 集成 | ✅ | EcuM_Init() 中调用 |
+| `CLOCK_DRV_Init` / `Port_Init` 集成 | ✅ | EcuM_Init() 内前两步 |
+| `Can_Init` + `CanIf_Init` 集成 | ✅ | EcuM_Init() MCAL + Abstraction 层 |
+| `PduR_Init` + `CanTp_Init` 集成 | ✅ | EcuM_Init() Services 层 |
+| `Can_EnableInterrupts` 集成 | ✅ | EcuM_Init() MCAL 层末尾 |
+| `EcuM_MainFunction()` | ✅ | CanTp 状态机 + CAN RX 消费 |
 | `EcuM_SetState()` | ✅ | 状态切换 API |
-| `EcuM_MainFunction()` | ✅ 已实现 | 驱动 CanTp 状态机 + CAN RX 消费 |
 | `EcuM_SelectShutdownTarget()` | 🟡 骨架 | 函数已定义，逻辑待实现 |
 
 ### 演进路线（跟着项目推进自然扩展）
 
 ```
 当前 ──→ 第1步: 加 SpiIf_Init()     → SPI 通信就绪
-        第2步: 加 PduR_Init()       → PDU 路由就绪
-        第3步: 加 Com_Init()        → 信号编解码就绪
-        第4步: 加 Rte_Init()        → SWC 可运行
-        第5步: 完善状态机           → 休眠/唤醒可用
-        第6步: 加 BswM 集成         → 模式管理完整
+        第2步: 加 Com_Init()        → 信号编解码就绪
+        第3步: 加 Rte_Init()        → SWC 可运行
+        第4步: 完善状态机           → 休眠/唤醒可用
+        第5步: 加 BswM 集成         → 模式管理完整
 ```
 
 每加一个新模块，只需在 `EcuM_Init()` 的对应分层位置插入一行 `Xxx_Init()`，不用满世界找初始化应该写在哪。

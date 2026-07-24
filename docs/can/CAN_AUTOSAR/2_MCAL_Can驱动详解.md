@@ -444,6 +444,21 @@ Can_Write(Hth=0, PduInfo)
 > NXP PAL 的 `CAN_Send()` 内部会检查 MB 的状态码（CS 字段）。一次成功发送后，硬件将 MB 的 CS 置为 INACTIVE（非空闲），而非 READY。下次调用 `CAN_Send()` 时 PAL 发现 MB 不是 READY，返回 `STATUS_BUSY`。
 >
 > 解决：每次 `Can_Write()` 前调 `CAN_ConfigTxBuff()`，它会复位 CS 字段到 READY。这是本项目最隐蔽的一个坑，也是 CAN 驱动能稳定运行的保障。
+>
+> **延伸：无 CAN 收发器时的 TX 锁死问题** ⚠️
+>
+> 如果 CAN 总线上没有其他节点（或没有收发器提供 ACK），FlexCAN 硬件会不断重传同一帧，错误计数器递增。第一帧后 ~6ms 即进入 Bus-Off 状态，TX Mailbox 永久锁死，后续所有 `Can_Send()` 全部失败。
+>
+> 解决：在 `Can_Write` 中 **`CAN_ConfigTxBuff` 之前**先调用 `CAN_AbortTransfer(&Can_Instance, Hth)`，强制中止挂起的重传。即使控制器在 Bus-Off 状态也会被复位到正常模式，允许后续发送。
+>
+> 完整流程：
+> ```
+> CAN_AbortTransfer()  → 中止任何挂起传输
+> CAN_ConfigTxBuff()   → 复位 MB STATE
+> CAN_Send()           → 加载新帧 + 启动发送
+> ```
+>
+> 这是本次 CanTp 开发过程中通过 LED 诊断序列逐步排查、最终定位到 FlexCAN 硬件行为的关键修复。
 
 **调用示例**：
 

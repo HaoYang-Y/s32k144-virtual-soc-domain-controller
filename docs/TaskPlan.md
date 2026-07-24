@@ -3,8 +3,9 @@
 > 基于实际项目结构，按 AUTOSAR CP/AP 分层组织。
 > 当前日期: 2026-07-18
 >
-> **CAN 已调通** ✅ — MCAL Can 驱动底层改用 CAN PAL，每发前重配 MB，
-> CANable (gs_usb, 1d50:606f) 500kbps 稳定接收。双向通信验证通过。
+> **CAN 栈已调通** ✅ — MCAL Can → CanIf → CanTp 三层全链路验证。
+> CanTp SF/FF 交替发送, CANable (gs_usb, 1d50:606f) 500kbps 稳定抓取。
+> CanTp MF 完整流控 (FF→FC→CF) 需 CAN 回环或对端节点配合。
 
 ---
 
@@ -12,22 +13,26 @@
 
 | 层 | 模块 | 目录 | 状态 |
 |----|------|------|------|
-| **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ⏳ 骨架已有（SDK API） |
-| **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ⏳ 骨架已有（clock_config + Mcu） |
-| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 已调通 (500kbps, 双向通信) |
+| **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ⏳ 骨架已有 |
+| **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ⏳ 骨架已有 |
+| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 已调通 (500kbps, 中断驱动) |
 | **MCAL** | Spi | `mcu/MCAL/Spi/` | ⏳ 骨架已有 |
-| **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有（pin_mux + Port） |
-| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ⏳ 骨架已有 |
+| **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有 |
+| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ✅ AUTOSAR 标准 + PduR 转发 |
 | **ECU Abstraction** | IoHwAb | `mcu/EcuAbstraction/IoHwAb/` | ⏳ 骨架已有 |
 | **ECU Abstraction** | SpiIf | `mcu/EcuAbstraction/SpiIf/` | ⏳ 骨架已有 |
-| **CDD** | Uart | `mcu/CDD/Uart/` | ⏳ 骨架已有，**未调通** 🔥 |
-| **RTE** | Rte | `mcu/RTE/` | ⏳ 骨架已有 |
-| **SWC** | Swc_SignalGateway | `mcu/App/Swc_SignalGateway/` | ⏳ 骨架已有 |
+| **Services** | EcuM | `mcu/Services/EcuM/` | ✅ 统一 Init + MainFunction 调度 |
+| **Services** | CanTp | `mcu/Services/CanTp/` | ✅ FC 流控状态机 (SF/FF 已验证) |
+| **Services** | PduR | `mcu/Services/PduR/` | ✅ 最小路由实现 |
+| **Services** | Com | `mcu/Services/Com/` | ⏳ 骨架 |
+| **CDD** | Uart | `mcu/CDD/Uart/` | ⏳ 骨架，**未调通** 🔥 |
+| **RTE** | Rte | `mcu/RTE/` | ⏳ 骨架 |
+| **SWC** | Swc_SignalGateway | `mcu/App/Swc_SignalGateway/` | ⏳ 骨架 |
 | — | — | — | — |
-| **SOC Platform** | ara/core, log, exec, Spi | `soc/platform/` | ⏳ 骨架已有 |
-| **SOC Communication** | ara/com, SpiGateway | `soc/communication/` | ⏳ 骨架已有 |
-| **SOC Diag** | UdsServer | `soc/diag/ara/diag/` | ⏳ 骨架已有 |
-| **SOC App** | DomainController | `soc/apps/DomainController/` | ⏳ 骨架已有 |
+| **SOC Platform** | ara/core, log, exec, Spi | `soc/platform/` | ⏳ 骨架 |
+| **SOC Communication** | ara/com, SpiGateway | `soc/communication/` | ⏳ 骨架 |
+| **SOC Diag** | UdsServer | `soc/diag/ara/diag/` | ⏳ 骨架 |
+| **SOC App** | DomainController | `soc/apps/DomainController/` | ⏳ 骨架 |
 | **Proto** | signal_gateway.proto | `proto/` | ❌ 代码生成未集成 |
 
 ---
