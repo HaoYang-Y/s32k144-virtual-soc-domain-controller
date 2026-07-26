@@ -1,36 +1,27 @@
 /**
  * @file    Mcu.c
  * @brief   AUTOSAR CP MCAL Mcu 驱动实现
- *
- * @note    内部调用 NXP SDK CLOCK_DRV API 完成时钟树初始化
- *          所有 SDK 依赖 (clock.h, CLOCK_DRV_*) 仅在本 .c 文件内可见
  */
 
 #include "Mcu.h"
-#include <stddef.h>             /* NULL */
-#include "clock.h"              /* CLOCK_DRV_Init, CLOCK_DRV_GetFreq */
-#include "status.h"             /* STATUS_SUCCESS */
+#include <stddef.h>
+#include "clock.h"
+#include "status.h"
+#include "device_registers.h"   /* RCM, S32_SCB */
 
 /* ===================================================================
- *  Mcu_InitClock
+ *  Mcu_Init (SWS_Mcu_00013)
  * =================================================================== */
 
-void Mcu_InitClock(const Mcu_ConfigType *cfg)
+Std_ReturnType Mcu_Init(const Mcu_ConfigType *cfg)
 {
-    /*
-     * 将 MCAL 配置映射到 SDK 调用:
-     *   NULL / FIRC → 使用 SDK 默认配置 (FIRC 48MHz, div1/1/1)
-     *   EXT_OSC      → 未来扩展: 切换 clock_manager_user_config_t 源
-     */
     if ((cfg == NULL) || (cfg->source == MCU_CLOCK_SOURCE_FIRC)) {
         (void)CLOCK_DRV_Init(NULL);
     } else {
-        /*
-         * TODO: 外部晶振模式 — 需要构造 clock_manager_user_config_t
-         *       设置 .scgConfig.soscConfig + .clockModeConfig 切换源
-         */
+        /* TODO: 外部晶振模式 */
         (void)CLOCK_DRV_Init(NULL);
     }
+    return E_OK;
 }
 
 /* ===================================================================
@@ -42,4 +33,32 @@ uint32_t Mcu_GetCoreFreq(void)
     uint32_t freq = 48000000U;
     (void)CLOCK_DRV_GetFreq(CORE_CLK, &freq);
     return freq;
+}
+
+/* ===================================================================
+ *  Mcu_GetResetReason (SWS_Mcu_00015)
+ * =================================================================== */
+
+Mcu_ResetType Mcu_GetResetReason(void)
+{
+    uint32_t srs = RCM->SRS;
+
+    if (srs & RCM_SRS_POR_MASK)    return MCU_RESET_POWER_ON;
+    if (srs & RCM_SRS_WDOG_MASK)   return MCU_RESET_WATCHDOG;
+    if (srs & RCM_SRS_LOCKUP_MASK)  return MCU_RESET_SOFTWARE; /* 硬件 fault */
+    if (srs & RCM_SRS_PIN_MASK)    return MCU_RESET_EXTERNAL;
+    return MCU_RESET_UNKNOWN;
+}
+
+/* ===================================================================
+ *  Mcu_PerformReset (SWS_Mcu_00093)
+ * =================================================================== */
+
+void Mcu_PerformReset(void)
+{
+    /* 使用 SDK 的 S32_SCB 结构 (CMSIS SCB 被 SDK 重命名为 S32_SCB) */
+    __disable_irq();
+    S32_SCB->AIRCR = ((0x5FAUL << 16U) | S32_SCB_AIRCR_SYSRESETREQ_MASK);
+    __DSB();
+    for (;;) { __WFI(); }
 }

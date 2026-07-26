@@ -20,7 +20,7 @@
 MCAL Can 的 API 长这样：
 
 ```c
-Can_Write(HTH, &pdu);       // 发一帧：HTH=TX Mailbox 编号（Controller 由驱动内部维护）
+Can_Write(HTH, &pdu);       // 发一帧：HTH 编码 Controller+MB (CAN_HTH_MAKE(ctrl,mb))
 Can_Read(0, HRH, &pdu);     // 收一帧：RX Mailbox=HRH (过滤 CAN ID=0x100)
 ```
 

@@ -1,16 +1,15 @@
 /**
  * @file    Can.h
- * @brief   AUTOSAR CP MCAL Can 驱动 — CAN 2.0 通信接口
+ * @brief   AUTOSAR CP MCAL Can 驱动 — CAN 2.0 多路通信接口
  *
  * @note    对标 AUTOSAR SWS_Can 规范:
- *          - SWS_Can_00008:  Can_IdType
- *          - SWS_Can_00009:  Can_HwHandleType
- *          - SWS_Can_00018~21: Can_PduType (L-PDU)
+ *          - SWS_Can_00009:  Can_HwHandleType — HTH 编码 Controller + MB Index
  *          - SWS_Can_00098:  Can_SetControllerMode → Std_ReturnType
  *          - SWS_Can_00106:  Can_Write(Hth, PduInfo) — 无 Controller 参数
  *          - SWS_Can_00167:  Can_GetControllerErrorState
  *          - SWS_Can_00130:  Can_GetControllerMode
  *
+ *          HTH 编码: bit[15:8]=Controller  bit[7:0]=MB Index
  *          底层调用 NXP FlexCAN SDK 驱动，头文件不暴露任何 SDK 类型。
  */
 
@@ -30,12 +29,20 @@
 typedef uint32_t Can_IdType;
 
 /** @brief CAN Hardware Object Handle (SWS_Can_00009)
- *  用于 Can_Write 指定 TX Mailbox，或 Can_Read 指定 RX Mailbox */
+ *  bit[15:8]=Controller  bit[7:0]=MB Index
+ *  Can_Write 只传 HTH，Controller 由 HTH 高位解码 */
 typedef uint16_t Can_HwHandleType;
+
+/** @brief HTH 编解码宏 */
+#define CAN_HTH_MAKE(ctrl, mb)    ((Can_HwHandleType)(((uint8_t)(ctrl) << 8U) | ((uint8_t)(mb) & 0xFFU)))
+#define CAN_HTH_CTRL(hth)         ((uint8_t)((hth) >> 8U))
+#define CAN_HTH_MB(hth)           ((uint8_t)((hth) & 0xFFU))
 
 /** @brief CAN 控制器 ID */
 typedef enum {
     CAN_CONTROLLER_0   = 0U,
+    CAN_CONTROLLER_1   = 1U,
+    CAN_CONTROLLER_2   = 2U,
     CAN_CONTROLLER_MAX
 } Can_ControllerType;
 
@@ -48,12 +55,12 @@ typedef enum {
 
 /** @brief CAN 控制器错误状态 (SWS_Can_00016) */
 typedef enum {
-    CAN_ERRORSTATE_ACTIVE  = 0U,   /**< Error Active  — 正常通信 */
-    CAN_ERRORSTATE_PASSIVE = 1U,   /**< Error Passive — 可通信但受限 */
-    CAN_ERRORSTATE_BUSOFF  = 2U,   /**< Bus Off       — 脱离总线 */
+    CAN_ERRORSTATE_ACTIVE  = 0U,
+    CAN_ERRORSTATE_PASSIVE = 1U,
+    CAN_ERRORSTATE_BUSOFF  = 2U,
 } Can_ErrorStateType;
 
-/** @brief FlexCAN 运行模式 (MCAL 自有枚举，非 SDK) */
+/** @brief FlexCAN 运行模式 */
 typedef enum {
     CAN_MODE_NORMAL    = 0U,
     CAN_MODE_FREEZE    = 1U,
@@ -67,42 +74,31 @@ typedef struct {
     bool         is_remote;
 } Can_HardwareObject;
 
-/** @brief CAN L-PDU 数据单元 (SWS_Can_00018~00021)
- *
- *  CAN 总线帧的 MCAL 层抽象 — 固定 8 字节 data 数组。
- *  CanIf 将 PduInfoType(N-PDU) 转换为 Can_PduType(L-PDU) 后调用 Can_Write。
- *  接收时 Can_Read 将硬件帧填充为 Can_PduType 后交给 CanIf。
- */
+/** @brief CAN L-PDU 数据单元 (SWS_Can_00018~00021) */
 typedef struct {
-    Can_IdType   id;            /**< CAN 报文 ID (SWS_Can_00018) */
-    uint8_t      length;        /**< 数据长度 DLC 0-8 (SWS_Can_00019) */
-    bool         is_extended;   /**< 扩展帧标志 (项目扩展) */
-    bool         is_remote;     /**< 远程帧标志 (项目扩展) */
-    uint8_t      data[8];       /**< CAN 帧数据 (SWS_Can_00021) */
+    Can_IdType   id;
+    uint8_t      length;
+    bool         is_extended;
+    bool         is_remote;
+    uint8_t      data[8];
 } Can_PduType;
 
 /* ===================================================================
- *  配置类型 — 仅含 MCAL 自有字段，上层无需知晓 FlexCAN SDK
+ *  配置类型
  * =================================================================== */
 
 typedef struct {
-    /* --- 控制器 --- */
-    uint8_t       controller;
-
-    /* --- Mailbox 配置 --- */
     uint8_t       max_num_mb;
     uint8_t       num_id_filters;
     bool          is_rx_fifo_needed;
     Can_ModeType  flexcan_mode;
 
-    /* --- 位时序 (映射到 SDK flexcan_time_segment_t) --- */
     uint8_t       prop_seg;
     uint8_t       phase_seg1;
     uint8_t       phase_seg2;
     uint8_t       pre_divider;
     uint8_t       r_jumpwidth;
 
-    /* --- MB 分配 --- */
     uint8_t                     num_tx_mailboxes;
     uint8_t                     num_rx_mailboxes;
     const Can_HardwareObject   *tx_mailboxes;
@@ -113,30 +109,43 @@ typedef struct {
  *  API 函数声明
  * =================================================================== */
 
-Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr);
+/** @brief 初始化指定 CAN 控制器 (SWS_Can_00013)
+ *  @param Controller  控制器 ID (CAN_CONTROLLER_0~2)
+ *  @param ConfigPtr   指向控制器配置结构，可为 NULL（只初始化软件状态） */
+Std_ReturnType Can_Init(Can_ControllerType Controller, const Can_ConfigType *ConfigPtr);
 
 Std_ReturnType Can_DeInit(void);
 
-/** @brief 设置控制器模式 (SWS_Can_00098) */
 Std_ReturnType Can_SetControllerMode(Can_ControllerType     Controller,
                                      Can_ControllerStateType Transition);
 
-/** @brief 发送 CAN 报文 — 只传 HTH，Controller 由 HTH 编码 (SWS_Can_00106) */
+/** @brief 发送 CAN 报文 — HTH 编码 Controller+MB (SWS_Can_00106) */
 Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo);
 
-/** @brief 轮询接收 CAN 报文 (项目扩展 — AUTOSAR 标准 RX 为中断回调) */
+/** @brief 轮询接收 — 中断模式下由 Can_MainFunctionRx 内部使用 */
 status_t       Can_Read(uint8_t Controller, uint8_t Hrh,
                         Can_PduType *PduInfo);
 
-/** @brief 获取控制器错误状态 (SWS_Can_00167) */
 Std_ReturnType Can_GetControllerErrorState(Can_ControllerType  Controller,
                                            Can_ErrorStateType *ErrorStatePtr);
-
-/** @brief 获取控制器当前模式 (SWS_Can_00130) */
 Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
                                      Can_ControllerStateType *ModePtr);
 
+/** @brief 使能所有已初始化控制器的 RX 中断 */
 void Can_EnableInterrupts(void);
+
+/** @brief RX 通知回调 — 上层模块注册，Can.c 在收到帧时调用 */
+typedef void (*Can_RxNotificationType)(Can_ControllerType Controller,
+                                       uint8_t Hrh,
+                                       const Can_PduType *PduInfo,
+                                       const uint8_t  *data);
+
+void Can_RegisterRxCallback(Can_RxNotificationType callback);
+
+/** @brief 周期调用: 所有控制器的 ISR 标记 → 消费 → 回调 */
 bool Can_MainFunctionRx(void);
+
+/** @brief 周期调用: 所有控制器的 TX 完成确认 (SWS_Can_00047) */
+void Can_MainFunctionWrite(void);
 
 #endif /* MCAL_CAN_H_ */

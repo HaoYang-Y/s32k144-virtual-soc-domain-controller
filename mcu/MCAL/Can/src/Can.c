@@ -1,22 +1,18 @@
 /**
  * @file    Can.c
- * @brief   AUTOSAR CP MCAL Can 驱动 — 基于 SDK CAN PAL 层实现
+ * @brief   AUTOSAR CP MCAL Can 驱动 — 多路 CAN 完整实现
  *
- * @note    对外暴露 AUTOSAR Can_Init/Can_Write/Can_Read 标准接口，
- *          内部使用 NXP CAN PAL (can_pal.h) 简化状态管理和中断处理。
- *          关键: 每次 Can_Write 前必须重配 TX MB (CAN_ConfigTxBuff),
+ * @note    HTH 编码: bit[15:8]=Controller  bit[7:0]=MB Index
+ *          支持最多 CAN_CONTROLLER_MAX 路 FlexCAN 并行工作。
+ *          每次 Can_Write 前必须重配 TX MB (CAN_ConfigTxBuff)，
  *          否则 FLEXCAN_DRV_Send 的 MB 状态检查会返回 BUSY。
- *
- *          Can_Write(Hth, PduInfo) — AUTOSAR 标准签名，不传 Controller。
- *          Controller 从 Can_Config.controller 获取（内部维护）。
  */
 
 #include "Can.h"
+#include "Can_Cfg.h"
 #include "can_pal.h"
 #include "can_pal_mapping.h"
 #include "can_pal_cfg.h"
-#include "CanIf.h"
-#include "CanIf_PduId.h"
 #include <stddef.h>
 
 /* ===================================================================
@@ -26,25 +22,30 @@
 #define CAN_STATUS_TO_STD_RET(s)  ((s) == STATUS_SUCCESS ? E_OK : E_NOT_OK)
 
 /* ===================================================================
- *  模块级私有变量
+ *  每控制器状态
  * =================================================================== */
 
-static const can_instance_t Can_Instance = {
-    .instType = CAN_INST_TYPE_FLEXCAN,
-    .instIdx  = 0U  /* FlexCAN0 */
-};
+typedef struct {
+    can_instance_t            instance;      /* PAL 实例 (FlexCAN0/1/2) */
+    Can_ConfigType            config;        /* MCAL 配置副本 */
+    can_user_config_t         palConfig;     /* PAL 配置副本 */
+    can_buff_config_t         txBuffCfg;     /* TX MB 缓冲配置 */
+    can_buff_config_t         rxBuffCfg;     /* RX MB 缓冲配置 */
+    bool                      initialized;   /* 是否已完成 Can_Init */
+    Can_ControllerStateType   state;         /* 运行状态 */
+    Can_ErrorStateType        errorState;    /* 错误状态 */
+    uint8_t                   txCount;       /* TX MB 数量 */
+    uint8_t                   rxCount;       /* RX MB 数量 */
 
-static can_user_config_t   Can_PalConfig;       /* PAL 配置副本 */
-static can_buff_config_t   Can_TxBuffCfg;       /* TX MB 配置 */
-static can_buff_config_t   Can_RxBuffCfg;       /* RX MB 配置 */
-static Can_ConfigType      Can_Config;          /* MCAL 配置副本 */
-static bool                Can_Initialized = false;
-static Can_ControllerStateType Can_State[CAN_CONTROLLER_MAX] = { CAN_CS_UNINIT };
-static Can_ErrorStateType      Can_ErrorState[CAN_CONTROLLER_MAX] = { CAN_ERRORSTATE_ACTIVE };
+    volatile bool             txComplete[16]; /* ISR 标记 TX 完成 */
+    /* RX 中断相关 — 静态 buffer，ISR 写入 */
+    can_message_t             rxMsgBuf[16];
+    volatile bool             rxPending[16];
+} Can_CtrlState;
 
-/* TX/RX Mailbox 数量 (来自 MCAL 配置) */
-static uint8_t Can_TxCount = 0U;
-static uint8_t Can_RxCount = 0U;
+static Can_CtrlState Can_Ctrl[CAN_CONTROLLER_MAX];
+
+static Can_RxNotificationType Can_RxCallback = NULL;
 
 /* ===================================================================
  *  内部: MCAL 配置 → PAL 配置 转换
@@ -56,70 +57,62 @@ static void Can_BuildPalConfig(const Can_ConfigType *mcal,
     pal->maxBuffNum  = mcal->max_num_mb;
     pal->mode        = (mcal->flexcan_mode == CAN_MODE_LOOPBACK)
                        ? CAN_LOOPBACK_MODE : CAN_NORMAL_MODE;
-    pal->peClkSrc    = CAN_CLK_SOURCE_OSC;      /* PE 直连 OSC (匹配卖家配置) */
+    pal->peClkSrc    = CAN_CLK_SOURCE_OSC;
     pal->enableFD    = false;
     pal->payloadSize = CAN_PAYLOAD_SIZE_8;
 
-    /* 位时序 — 使用卖家已验证的 13TQ 默认，后续可从 MCAL 配置覆盖 */
     pal->nominalBitrate.propSeg    = mcal->prop_seg;
     pal->nominalBitrate.phaseSeg1  = mcal->phase_seg1;
     pal->nominalBitrate.phaseSeg2  = mcal->phase_seg2;
     pal->nominalBitrate.preDivider = mcal->pre_divider;
     pal->nominalBitrate.rJumpwidth = mcal->r_jumpwidth;
 
-    /* FD 数据相位时序 (不使用 FD, 与 nominal 相同即可) */
     pal->dataBitrate = pal->nominalBitrate;
     pal->extension   = NULL;
 }
 
 /* ===================================================================
- *  Can_Init
+ *  Can_Init  — 初始化指定控制器
  * =================================================================== */
 
-Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr)
+Std_ReturnType Can_Init(Can_ControllerType Controller, const Can_ConfigType *ConfigPtr)
 {
-    uint8_t i;
+    if (Controller >= CAN_CONTROLLER_MAX) return E_NOT_OK;
+    if (ConfigPtr == NULL)               return E_NOT_OK;
 
-    if (ConfigPtr == NULL) return E_NOT_OK;
+    Can_CtrlState *c = &Can_Ctrl[Controller];
 
-    /* 保存 MCAL 配置副本 */
-    Can_Config = *ConfigPtr;
-    Can_TxCount = ConfigPtr->num_tx_mailboxes;
-    Can_RxCount = ConfigPtr->num_rx_mailboxes;
+    c->config = *ConfigPtr;
+    c->txCount = ConfigPtr->num_tx_mailboxes;
+    c->rxCount = ConfigPtr->num_rx_mailboxes;
 
-    /* MCAL → PAL 转换 */
-    Can_BuildPalConfig(ConfigPtr, &Can_PalConfig);
+    c->instance.instType = CAN_INST_TYPE_FLEXCAN;
+    c->instance.instIdx  = (uint32_t)Controller;
 
-    /* 通过 CAN PAL 初始化 */
-    if (CAN_Init(&Can_Instance, &Can_PalConfig) != STATUS_SUCCESS) {
+    Can_BuildPalConfig(ConfigPtr, &c->palConfig);
+
+    if (CAN_Init(&c->instance, &c->palConfig) != STATUS_SUCCESS) {
         return E_NOT_OK;
     }
 
-    /* 统一配置 TX/RX MB 共用参数 */
-    Can_TxBuffCfg = (can_buff_config_t){
-        .enableFD  = false,
-        .enableBRS = false,
-        .fdPadding = 0U,
-        .idType    = CAN_MSG_ID_STD,
-        .isRemote  = false,
+    c->txBuffCfg = (can_buff_config_t){
+        .enableFD  = false, .enableBRS = false, .fdPadding = 0U,
+        .idType    = CAN_MSG_ID_STD, .isRemote  = false,
     };
-    Can_RxBuffCfg = Can_TxBuffCfg;  /* 初始一样 */
+    c->rxBuffCfg = c->txBuffCfg;
 
-    /* 配置 TX Mailboxes */
-    for (i = 0U; i < Can_TxCount; i++) {
-        CAN_ConfigTxBuff(&Can_Instance, i, &Can_TxBuffCfg);
+    for (uint8_t i = 0U; i < c->txCount; i++) {
+        CAN_ConfigTxBuff(&c->instance, i, &c->txBuffCfg);
     }
 
-    /* 配置 RX Mailboxes (索引从 num_tx 开始) */
-    for (i = 0U; i < Can_RxCount; i++) {
-        uint32_t rx_id = Can_Config.rx_mailboxes[i].id;
-        CAN_ConfigRxBuff(&Can_Instance, Can_TxCount + i,
-                         &Can_RxBuffCfg, rx_id);
+    for (uint8_t i = 0U; i < c->rxCount; i++) {
+        uint32_t rx_id = c->config.rx_mailboxes[i].id;
+        CAN_ConfigRxBuff(&c->instance, c->txCount + i, &c->rxBuffCfg, rx_id);
     }
 
-    Can_Initialized = true;
-    Can_State[Can_Config.controller] = CAN_CS_STOPPED;
-    Can_ErrorState[Can_Config.controller] = CAN_ERRORSTATE_ACTIVE;
+    c->initialized = true;
+    c->state       = CAN_CS_STOPPED;
+    c->errorState  = CAN_ERRORSTATE_ACTIVE;
     return E_OK;
 }
 
@@ -129,28 +122,32 @@ Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr)
 
 Std_ReturnType Can_DeInit(void)
 {
-    if (!Can_Initialized) return E_NOT_OK;
-    (void)CAN_Deinit(&Can_Instance);
-    Can_Initialized = false;
-    Can_State[Can_Config.controller] = CAN_CS_UNINIT;
+    for (uint8_t i = 0U; i < CAN_CONTROLLER_MAX; i++) {
+        Can_CtrlState *c = &Can_Ctrl[i];
+        if (c->initialized) {
+            (void)CAN_Deinit(&c->instance);
+            c->initialized = false;
+            c->state = CAN_CS_UNINIT;
+        }
+    }
     return E_OK;
 }
 
 /* ===================================================================
- *  Can_SetControllerMode  (SWS_Can_00098)
+ *  Can_SetControllerMode
  * =================================================================== */
 
 Std_ReturnType Can_SetControllerMode(Can_ControllerType     Controller,
                                      Can_ControllerStateType Transition)
 {
-    if (Controller >= CAN_CONTROLLER_MAX || !Can_Initialized) {
-        return E_NOT_OK;
-    }
+    if (Controller >= CAN_CONTROLLER_MAX)   return E_NOT_OK;
+    Can_CtrlState *c = &Can_Ctrl[Controller];
+    if (!c->initialized)                    return E_NOT_OK;
 
     if (Transition == CAN_CS_STARTED) {
-        Can_State[Controller] = CAN_CS_STARTED;
+        c->state = CAN_CS_STARTED;
     } else if (Transition == CAN_CS_STOPPED) {
-        Can_State[Controller] = CAN_CS_STOPPED;
+        c->state = CAN_CS_STOPPED;
     } else {
         return E_NOT_OK;
     }
@@ -158,29 +155,26 @@ Std_ReturnType Can_SetControllerMode(Can_ControllerType     Controller,
 }
 
 /* ===================================================================
- *  Can_Write  (SWS_Can_00106)
- *  @note  AUTOSAR 标准签名: 只传 HTH, 不传 Controller。
- *         Controller 由 Can_Config.controller 内部维护。
- *         每次发送前必须调用 CAN_ConfigTxBuff 重新配置 TX MB。
+ *  Can_Write  — HTH 解码: bit[15:8]=Controller  bit[7:0]=MB
  * =================================================================== */
 
 Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo)
 {
+    uint8_t ctrl   = CAN_HTH_CTRL(Hth);
+    uint8_t mb_idx = CAN_HTH_MB(Hth);
+
+    if (ctrl >= CAN_CONTROLLER_MAX) return E_NOT_OK;
+    Can_CtrlState *c = &Can_Ctrl[ctrl];
+    if (!c->initialized)                     return E_NOT_OK;
+    if (c->state != CAN_CS_STARTED)          return E_NOT_OK;
+    if (mb_idx >= c->txCount)               return E_NOT_OK;
+    if (PduInfo == NULL)                     return E_NOT_OK;
+    if (PduInfo->length > 8U)                return E_NOT_OK;
+
+    (void)CAN_AbortTransfer(&c->instance, mb_idx);
+    CAN_ConfigTxBuff(&c->instance, mb_idx, &c->txBuffCfg);
+
     can_message_t tx_msg;
-    uint8_t controller = Can_Config.controller;
-
-    if (!Can_Initialized)                        return E_NOT_OK;
-    if (Can_State[controller] != CAN_CS_STARTED) return E_NOT_OK;
-    if (Hth >= Can_TxCount)                      return E_NOT_OK;
-    if (PduInfo == NULL)                         return E_NOT_OK;
-    if (PduInfo->length > 8U)                    return E_NOT_OK;
-
-    /* 每次发送前: 中止挂起的传输 + 重配 TX MB
-     * 无 CAN 收发器/ACK 时 FlexCAN 会一直重传 → MB 锁死 → 必须主动中止 */
-    (void)CAN_AbortTransfer(&Can_Instance, Hth);
-    CAN_ConfigTxBuff(&Can_Instance, Hth, &Can_TxBuffCfg);
-
-    /* 构造 PAL 消息 */
     tx_msg.cs     = 0U;
     tx_msg.id     = PduInfo->id;
     tx_msg.length = PduInfo->length;
@@ -188,32 +182,29 @@ Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo)
         tx_msg.data[i] = PduInfo->data[i];
     }
 
-    return CAN_STATUS_TO_STD_RET(CAN_Send(&Can_Instance, Hth, &tx_msg));
+    return CAN_STATUS_TO_STD_RET(CAN_Send(&c->instance, mb_idx, &tx_msg));
 }
 
 /* ===================================================================
- *  Can_Read  (项目扩展 — 轮询模式，AUTOSAR 标准使用中断回调)
- *  保持原有签名，便于现有代码兼容
+ *  Can_Read  — 轮询模式 (中断模式下由 Can_MainFunctionRx 内部调用)
  * =================================================================== */
 
 status_t Can_Read(uint8_t Controller, uint8_t Hrh,
                   Can_PduType *PduInfo)
 {
+    if (Controller >= CAN_CONTROLLER_MAX) return STATUS_ERROR;
+    Can_CtrlState *c = &Can_Ctrl[Controller];
+    if (!c->initialized)                  return STATUS_ERROR;
+    if (c->state != CAN_CS_STARTED)       return STATUS_ERROR;
+    if (Hrh < c->txCount)                 return STATUS_ERROR;
+    if (PduInfo == NULL)                  return STATUS_ERROR;
+
     can_message_t rx_msg;
-    status_t      ret;
-
-    if (!Can_Initialized)                        return STATUS_ERROR;
-    if (Controller != Can_Config.controller)     return STATUS_ERROR;
-    if (Can_State[Controller] != CAN_CS_STARTED) return STATUS_ERROR;
-    if (Hrh < Can_TxCount)                       return STATUS_ERROR;
-    if (PduInfo == NULL)                         return STATUS_ERROR;
-
-    /* 实际 MB 索引 = TX 数量 + RX 偏移 */
-    ret = CAN_Receive(&Can_Instance, Hrh, &rx_msg);
+    status_t ret = CAN_Receive(&c->instance, Hrh, &rx_msg);
     if (ret == STATUS_SUCCESS) {
         PduInfo->id          = rx_msg.id;
         PduInfo->length      = rx_msg.length;
-        PduInfo->is_extended = (rx_msg.cs & 0x1U) ? true : false;  /* IDE bit */
+        PduInfo->is_extended = (rx_msg.cs & 0x1U) ? true : false;
         PduInfo->is_remote   = false;
         for (uint8_t i = 0U; i < 8U; i++) {
             PduInfo->data[i] = (i < rx_msg.length) ? rx_msg.data[i] : 0U;
@@ -223,99 +214,113 @@ status_t Can_Read(uint8_t Controller, uint8_t Hrh,
 }
 
 /* ===================================================================
- *  Can_GetControllerErrorState  (SWS_Can_00167)
+ *  Can_GetControllerErrorState / Can_GetControllerMode
  * =================================================================== */
 
 Std_ReturnType Can_GetControllerErrorState(Can_ControllerType  Controller,
                                            Can_ErrorStateType *ErrorStatePtr)
 {
-    if (Controller >= CAN_CONTROLLER_MAX || !Can_Initialized) {
-        return E_NOT_OK;
-    }
-    if (ErrorStatePtr == NULL) {
-        return E_NOT_OK;
-    }
-    *ErrorStatePtr = Can_ErrorState[Controller];
+    if (Controller >= CAN_CONTROLLER_MAX)   return E_NOT_OK;
+    Can_CtrlState *c = &Can_Ctrl[Controller];
+    if (!c->initialized)                    return E_NOT_OK;
+    if (ErrorStatePtr == NULL)              return E_NOT_OK;
+    *ErrorStatePtr = c->errorState;
     return E_OK;
 }
-
-/* ===================================================================
- *  Can_GetControllerMode  (SWS_Can_00130)
- * =================================================================== */
 
 Std_ReturnType Can_GetControllerMode(Can_ControllerType      Controller,
                                      Can_ControllerStateType *ModePtr)
 {
-    if (Controller >= CAN_CONTROLLER_MAX || !Can_Initialized) {
-        return E_NOT_OK;
-    }
-    if (ModePtr == NULL) {
-        return E_NOT_OK;
-    }
-    *ModePtr = Can_State[Controller];
+    if (Controller >= CAN_CONTROLLER_MAX)   return E_NOT_OK;
+    Can_CtrlState *c = &Can_Ctrl[Controller];
+    if (!c->initialized)                    return E_NOT_OK;
+    if (ModePtr == NULL)                    return E_NOT_OK;
+    *ModePtr = c->state;
     return E_OK;
 }
 
 /* ===================================================================
- *  中断模式 — ISR 回调 + 武装 RX MB
+ *  中断模式 — 每控制器独立 ISR 回调 + 武装 RX MB
  * =================================================================== */
-
-/* RX MB 数据接收缓冲区（必须静态 — ISR 写入，不能是栈变量） */
-static can_message_t Can_RxMsgBuf[8];  /* 最多 8 个 RX MB */
-static volatile bool   Can_RxPending[8];
 
 static void Can_IrqCallback(uint32_t instance, can_event_t eventType,
                              uint32_t buffIdx, void *driverState)
 {
-    (void)instance;
     (void)driverState;
 
+    if (instance >= CAN_CONTROLLER_MAX || buffIdx >= 16U) return;
+
     if (eventType == CAN_EVENT_RX_COMPLETE) {
-        /* 标记数据就绪，延迟到主循环处理（避免 ISR 中调用 CanIf） */
-        if (buffIdx < 8U) {
-            Can_RxPending[buffIdx] = true;
-        }
+        Can_Ctrl[instance].rxPending[buffIdx] = true;
+    } else if (eventType == CAN_EVENT_TX_COMPLETE) {
+        Can_Ctrl[instance].txComplete[buffIdx] = true;
     }
-    /* TX 完成 — 预留 Can_TxConfirmation */
 }
 
 void Can_EnableInterrupts(void)
 {
-    (void)CAN_InstallEventCallback(&Can_Instance, Can_IrqCallback, NULL);
+    for (uint8_t ctrl = 0U; ctrl < CAN_CONTROLLER_MAX; ctrl++) {
+        Can_CtrlState *c = &Can_Ctrl[ctrl];
+        if (!c->initialized) continue;
 
-    for (uint8_t i = 0U; i < Can_RxCount; i++) {
-        uint8_t mb_idx = Can_TxCount + i;
-        Can_RxMsgBuf[mb_idx].cs = 0U;
-        Can_RxPending[mb_idx] = false;
-        (void)CAN_Receive(&Can_Instance, mb_idx, &Can_RxMsgBuf[mb_idx]);
+        (void)CAN_InstallEventCallback(&c->instance, Can_IrqCallback, NULL);
+
+        for (uint8_t i = 0U; i < c->rxCount; i++) {
+            uint8_t mb_idx = c->txCount + i;
+            c->rxMsgBuf[mb_idx].cs = 0U;
+            c->rxPending[mb_idx]   = false;
+            (void)CAN_Receive(&c->instance, mb_idx, &c->rxMsgBuf[mb_idx]);
+        }
     }
 }
 
-/* 主循环调用: 检查 ISR 是否有新帧，有则转发给 CanIf，返回是否处理了帧 */
+void Can_RegisterRxCallback(Can_RxNotificationType callback)
+{
+    Can_RxCallback = callback;
+}
+
 bool Can_MainFunctionRx(void)
 {
     bool got_frame = false;
-    for (uint8_t i = 0U; i < Can_RxCount; i++) {
-        uint8_t mb_idx = Can_TxCount + i;
-        if (Can_RxPending[mb_idx]) {
-            Can_RxPending[mb_idx] = false;
+    if (Can_RxCallback == NULL) return false;
+
+    for (uint8_t ctrl = 0U; ctrl < CAN_CONTROLLER_MAX; ctrl++) {
+        Can_CtrlState *c = &Can_Ctrl[ctrl];
+        if (!c->initialized) continue;
+
+        for (uint8_t i = 0U; i < c->rxCount; i++) {
+            uint8_t mb_idx = c->txCount + i;
+            if (!c->rxPending[mb_idx]) continue;
+            c->rxPending[mb_idx] = false;
             got_frame = true;
 
-            can_message_t *rx = &Can_RxMsgBuf[mb_idx];
-            CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(rx->id);
-            if (pduId < CANIF_PDU_COUNT) {
-                PduInfoType rxPdu = {
-                    .SduId      = pduId,
-                    .SduLength  = rx->length,
-                    .SduDataPtr = rx->data,
-                };
-                CanIf_RxIndication(pduId, &rxPdu);
-            }
+            can_message_t *rx = &c->rxMsgBuf[mb_idx];
+            Can_PduType pdu = {
+                .id          = rx->id,
+                .length      = rx->length,
+                .is_extended = (rx->cs & 0x1U) ? true : false,
+                .is_remote   = false,
+            };
+            Can_RxCallback((Can_ControllerType)ctrl, mb_idx, &pdu, rx->data);
 
-            /* 重新武装此 MB */
-            Can_RxMsgBuf[mb_idx].cs = 0U;
-            (void)CAN_Receive(&Can_Instance, mb_idx, &Can_RxMsgBuf[mb_idx]);
+            c->rxMsgBuf[mb_idx].cs = 0U;
+            (void)CAN_Receive(&c->instance, mb_idx, &c->rxMsgBuf[mb_idx]);
         }
     }
     return got_frame;
+}
+
+void Can_MainFunctionWrite(void)
+{
+    for (uint8_t ctrl = 0U; ctrl < CAN_CONTROLLER_MAX; ctrl++) {
+        Can_CtrlState *c = &Can_Ctrl[ctrl];
+        if (!c->initialized) continue;
+
+        for (uint8_t i = 0U; i < c->txCount; i++) {
+            if (c->txComplete[i]) {
+                c->txComplete[i] = false;
+                /* TODO: 通知上层 CanIf_TxConfirmation */
+            }
+        }
+    }
 }

@@ -34,7 +34,7 @@ void EcuM_Init(void)
     Port_Init();
 
     /* --- MCAL 层 --- */
-    if (Can_Init(&Can_Config) != E_OK) {
+    if (Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) != E_OK) {
         return;
     }
     (void)Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);

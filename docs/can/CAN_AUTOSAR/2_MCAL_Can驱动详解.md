@@ -65,8 +65,8 @@ Can_Write(Controller, Hth, &pdu);
 
 每个 MB 是一个独立的硬件缓冲单元，由两个关键编号定位：
 
-- **HTH**（Hardware Transmit Handle）— 发送用的 MB 索引，`Can_Write(Controller, Hth, &pdu)` 的第二个参数
-- **HRH**（Hardware Receive Handle）— 接收用的 MB 索引，`Can_Read(Controller, Hrh, &pdu)` 的第二个参数
+- **HTH**（Hardware Transmit Handle）— `bit[15:8]=Controller, bit[7:0]=MB_Index`，`Can_Write(Hth, &pdu)` 只传 HTH，Controller 由高位解码
+- **HRH**（Hardware Receive Handle）— 接收用 MB 索引，中断模式下由 `Can_MainFunctionRx` 内部使用
 
 S32K144 的 FlexCAN 控制器有 **16 个 Mailbox**，每个 MB 是一个独立的硬件缓冲单元。你可以把 MB 想象成停车位：
 
@@ -283,31 +283,45 @@ main() 循环 (通过 EcuM_MainFunction):
 ### 4.4 中断模式 API（已实现）
 
 ```c
-// 初始化: 安装回调 + 武装所有 RX MB（在 EcuM_Init 之后调用）
-void Can_EnableInterrupts(void);
-
-// 周期调用: 检查 ISR 是否有新帧，有则转发 CanIf + 重新武装
-bool Can_MainFunctionRx(void);
+void Can_EnableInterrupts(void);              /* 安装回调 + 武装 RX MB */
+bool Can_MainFunctionRx(void);                /* 消费 ISR 标记的 RX 帧 */
+void Can_MainFunctionWrite(void);             /* 消费 ISR 标记的 TX 完成确认 (SWS_Can_00047) */
 ```
 
-**初始化流程**（全部由 EcuM 统一调度，main.c 不直接接触 Can API）：
+### 4.5 分层回调架构（已实现）
+
+MCAL 层不直接调用上层 API。上层通过 `Can_RegisterRxCallback()` 注册通知函数：
 
 ```
-EcuM_Init()                        Can.c
-  │                                 │
-  ├─ CLOCK_DRV_Init()               │
-  ├─ Port_Init()                    │
-  ├─ Can_Init(&Can_Config) ──────→  │  初始化 FlexCAN 硬件 + Mailbox 配置
-  ├─ Can_SetControllerMode()        │
-  ├─ Can_EnableInterrupts() ──────→ ├─ CAN_InstallEventCallback(Can_IrqCallback)
-  │                                 ├─ 遍历 RX MB: CAN_Receive 武装
-  ├─ CanIf_Init()                   │
-  ├─ PduR_Init()                    │
-  └─ CanTp_Init()                   │
+CanIf_Init()
+  ├─ Can_RegisterRxCallback(CanIf_McalRxCallback)  ← 上层注册回调到 MCAL
+  └─ ...
+  
+CAN RX 帧到达:
+  ISR → Can_RxPending[mb] = true
+  →
+  EcuM_MainFunction → Can_MainFunctionRx()
+    → Can_RxCallback(Controller, Hrh, &pdu, data)  ← 调注册的回调
+    → CanIf_McalRxCallback → PDU ID 翻译 → CanIf_RxIndication
+```
 
-EcuM_MainFunction() (main 循环 ~1kHz 调用):
-  ├─ CanTp_MainFunction()  ← 驱动 CAN TP 流控状态机
-  └─ Can_MainFunctionRx()  ← 检查 Can_RxPending[] → 读数据 → CanIf → CAN_Receive
+**初始化流程**（全部由 EcuM 统一调度）：
+
+```
+EcuM_Init()                        
+  ├─ CLOCK_DRV_Init()              
+  ├─ Port_Init()                   
+  ├─ Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0)  ← 多路 CAN，指定控制器
+  ├─ Can_SetControllerMode(STARTED)
+  ├─ Can_EnableInterrupts()        ← 武装所有 RX MB（在 CanIf_Init 之前）
+  ├─ CanIf_Init()                  ← 内部注册 Can_RegisterRxCallback
+  ├─ PduR_Init()
+  └─ CanTp_Init()
+
+EcuM_MainFunction() (main 循环):
+  ├─ CanTp_MainFunction()
+  ├─ Can_MainFunctionRx()          ← RX 消费
+  └─ Can_MainFunctionWrite()       ← TX 确认（预留 CanIf_TxConfirmation）
 ```
 
 ---
@@ -317,8 +331,10 @@ EcuM_MainFunction() (main 循环 ~1kHz 调用):
 ### 5.1 Can_Init — 对标 AUTOSAR SWS_Can_00013
 
 ```c
-Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr);
+Std_ReturnType Can_Init(Can_ControllerType Controller, const Can_ConfigType *ConfigPtr);
 ```
+
+> 支持多路 CAN 独立初始化。每路 Controller 维护独立的 `Can_CtrlState`（PAL 实例、配置副本、状态、RX buffer）。`Can_ConfigType` 已移除 `controller` 字段。Controller 作为显式参数传入，便于将来扩展到 CAN1/CAN2。
 
 > **AUTOSAR 规范定义**：初始化 CAN 控制器硬件，配置位时序和 Mailbox。成功后控制器进入 CAN_CS_STOPPED 状态。每个控制器只能 Init 一次，重复 Init 必须先 DeInit。
 
@@ -386,10 +402,12 @@ const Can_ConfigType Can_Config = {
 
 ```c
 // EcuM.c — EcuM_Init() 内部按 AUTOSAR 顺序调用
-if (Can_Init(&Can_Config) != E_OK) {
+// Can_Init(Controller, ConfigPtr) — 支持多路 CAN 独立初始化
+if (Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) != E_OK) {
     return;                                  // 初始化失败，进入安全状态
 }
 (void)Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
+Can_EnableInterrupts();  // 武装 RX MB 中断（在 CanIf_Init 之前调用）
 ```
 
 ```c
@@ -405,7 +423,9 @@ EcuM_Init();  // 内部依次初始化 MCAL → ECU Abstraction → Services →
 Std_ReturnType Can_Write(Can_HwHandleType Hth, const Can_PduType *PduInfo);
 ```
 
-> **AUTOSAR 规范定义**：将一个 CAN L-PDU 写入由 Hth（Hardware Transmit Handle）标识的 TX 硬件对象。Controller 由驱动内部根据配置维护，不暴露给调用方。函数立即返回，不等待发送完成。
+> **AUTOSAR 规范定义**：将一个 CAN L-PDU 写入由 Hth 标识的 TX 硬件对象。Hth 编码 Controller 和 MB Index (bit[15:8]=Controller, bit[7:0]=MB)，函数立即返回不等待发送完成。
+>
+> **调用约定**：上层用 `CAN_HTH_MAKE(Controller, MB_Index)` 构造 HTH，如 `CanIf` 层用 `CAN_HTH_MAKE(CAN_CONTROLLER_0, 0U)`。
 
 | 参数 | 含义 | 本项目实际值 |
 |------|------|-------------|

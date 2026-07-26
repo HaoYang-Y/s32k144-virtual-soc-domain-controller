@@ -45,7 +45,7 @@ AUTOSAR CP 将 CAN 通信拆分为多个层次，从应用信号到物理总线�
 > - **CanTp** (CAN Transport Protocol) — CAN 传输层，ISO 15765-2 多帧分包/重组
 > - **CanIf** (CAN Interface) — CAN 接口层，PDU ↔ CAN 帧的硬件无关抽象
 > - **MCAL** (Microcontroller Abstraction Layer) — 微控制器抽象层，直接访问硬件寄存器
-> - **HTH** (Hardware Transmit Handle) — 硬件发送句柄，即 TX Mailbox 索引
+> - **HTH** (Hardware Transmit Handle) — 硬件发送句柄，bit[15:8]=Controller, bit[7:0]=MB Index (AUTOSAR SWS_Can_00009)
 > - **HRH** (Hardware Receive Handle) — 硬件接收句柄，即 RX Mailbox 索引
 > - **MB** (Message Buffer / Mailbox) — FlexCAN 硬件中的消息缓冲单元
 > - **DET** (Development Error Tracer) — 开发错误追踪，AUTOSAR 标准错误报告机制
@@ -120,7 +120,11 @@ AUTOSAR CP 将 CAN 通信拆分为多个层次，从应用信号到物理总线�
 
 **职责**：直接访问 CAN 硬件（FlexCAN 控制器），发送/接收物理 CAN 帧。
 
-> **SWS 规范**：`Can_Init` (SWS_Can_00013)、`Can_Write` (SWS_Can_00015)、`Can_Read` (SWS_Can_00016)、`Can_SetControllerMode` (SWS_Can_00019)、`Can_DeInit` (SWS_Can_00014)。
+> **SWS 规范**：`Can_Init` (SWS_Can_00013, 支持多路 CAN 独立初始化)、`Can_Write` (SWS_Can_00106, HTH 编码 Controller+MB)、`Can_SetControllerMode` (SWS_Can_00098)、`Can_DeInit` (SWS_Can_00014)、`Can_MainFunctionWrite` (SWS_Can_00047)、`Can_MainFunctionRx` (SWS_Can_00048)。
+>
+> **HTH 编码** (SWS_Can_00009)：`bit[15:8]=Controller  bit[7:0]=MB_Index`，`Can_Write(Hth, PduInfo)` 不传 Controller 参数——Controller 从 HTH 高位解码。宏：`CAN_HTH_MAKE(ctrl, mb)`, `CAN_HTH_CTRL(hth)`, `CAN_HTH_MB(hth)`。
+>
+> **多路 CAN 架构**：每 Controller 独立 `Can_CtrlState`（实例、状态、buffer），`Can_MainFunctionRx/Write` 遍历所有已初始化控制器。
 
 **文件位置**：
 - `mcu/MCAL/Can/include/Can.h` — 类型定义和 API 声明

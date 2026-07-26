@@ -46,7 +46,8 @@
  *  当前写死与 main.c 的 TX_MB=0 / RX_MB=1 一致
  *  后续可移入 CanIf_PduConfigType 扩展字段
  * =================================================================== */
-#define CANIF_TX_HTH  0U
+/* HTH = Controller 0, TX MB 0 */
+#define CANIF_TX_HTH  CAN_HTH_MAKE(CAN_CONTROLLER_0, 0U)
 #define CANIF_RX_HRH  1U
 
 /* ===================================================================
@@ -90,8 +91,28 @@ CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId)
  *  API 实现
  * =================================================================== */
 
+/* MCAL Can RX 回调 — PDU ID 翻译后调用 CanIf_RxIndication */
+static void CanIf_McalRxCallback(Can_ControllerType Controller,
+                                  uint8_t Hrh, const Can_PduType *PduInfo,
+                                  const uint8_t *data)
+{
+    (void)Controller;
+    (void)Hrh;
+    CanIf_PduIdType pduId = CanIf_FindPduIdByCanId(PduInfo->id);
+    if (pduId < CANIF_PDU_COUNT) {
+        PduInfoType rxPdu = {
+            .SduId      = pduId,
+            .SduLength  = PduInfo->length,
+            .SduDataPtr = (uint8_t *)data,
+        };
+        CanIf_RxIndication(pduId, &rxPdu);
+    }
+}
+
 void CanIf_Init(void)
 {
+    Can_RegisterRxCallback(CanIf_McalRxCallback);
+
     canif_state = 1U;
     LOG_I("CanIf", "Init done, %u controller(s), %u PDU(s)",
           (unsigned int)CANIF_CONTROLLER_COUNT,
