@@ -1,11 +1,12 @@
 # Domain Controller 任务计划
 
 > 基于实际项目结构，按 AUTOSAR CP/AP 分层组织。
-> 当前日期: 2026-07-18
+> 当前日期: 2026-07-20
 >
-> **CAN 栈已调通** ✅ — MCAL Can → CanIf → CanTp 三层全链路验证。
-> CanTp SF/FF 交替发送, CANable (gs_usb, 1d50:606f) 500kbps 稳定抓取。
-> CanTp MF 完整流控 (FF→FC→CF) 需 CAN 回环或对端节点配合。
+> **CAN 栈全链路调通** ✅ — MCAL Can → CanIf → CanTp 三层验证。
+> 中断驱动 RX (Can_EnableInterrupts + Can_MainFunctionRx)，分层回调架构。
+> 多路 CAN 架构 (HTH 编码 Controller+MB)，CanTp SF/FF/MF 完整流控。
+> CANable (gs_usb, 1d50:606f) 500kbps 稳定抓取。
 
 ---
 
@@ -13,16 +14,16 @@
 
 | 层 | 模块 | 目录 | 状态 |
 |----|------|------|------|
-| **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ⏳ 骨架已有 |
-| **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ⏳ 骨架已有 |
-| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 已调通 (500kbps, 中断驱动) |
+| **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ✅ AUTOSAR 对齐 (Read/Write/FlipChannel, Std_ReturnType) |
+| **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ✅ AUTOSAR 对齐 (Mcu_Init, GetResetReason, PerformReset) |
+| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 多路架构 + 中断驱动 RX + HTH 编码 |
 | **MCAL** | Spi | `mcu/MCAL/Spi/` | ⏳ 骨架已有 |
 | **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有 |
-| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ✅ AUTOSAR 标准 + PduR 转发 |
+| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ✅ 分层回调 + PDU 翻译 + 中断 RX |
 | **ECU Abstraction** | IoHwAb | `mcu/EcuAbstraction/IoHwAb/` | ⏳ 骨架已有 |
 | **ECU Abstraction** | SpiIf | `mcu/EcuAbstraction/SpiIf/` | ⏳ 骨架已有 |
 | **Services** | EcuM | `mcu/Services/EcuM/` | ✅ 统一 Init + MainFunction 调度 |
-| **Services** | CanTp | `mcu/Services/CanTp/` | ✅ FC 流控状态机 (SF/FF 已验证) |
+| **Services** | CanTp | `mcu/Services/CanTp/` | ✅ FC 流控状态机 (SF/FF/MF 已验证) |
 | **Services** | PduR | `mcu/Services/PduR/` | ✅ 最小路由实现 |
 | **Services** | Com | `mcu/Services/Com/` | ⏳ 骨架 |
 | **CDD** | Uart | `mcu/CDD/Uart/` | ⏳ 骨架，**未调通** 🔥 |
@@ -60,23 +61,13 @@
 - [x] USB-CAN 分析仪 candump 验证 — CANable (gs_usb, 1d50:606f)
 - [x] 烧录到 S32K144 验证
 
-**Bug 修复记录**:
-> 1. **CANH/CANL 接反** → 对调
-> 2. **CAN FD 未关闭** → Can_BuildSdkConfig 中显式 fd_enable=false
-> 3. **LED 引脚映射错误** → PTD0=橙, PTD1=红, PTD15=绿, PTD16=蓝
-> 4. **Mailbox 状态不释放** → 每发前调 CAN_ConfigTxBuff 重配 TX MB（关键修复）
-> 5. **MCAL Can.c 改用 PAL 层实现** — 保持 AUTOSAR Can.h 接口不变，
->    底层从 FLEXCAN_DRV 切换到 CAN PAL，解决状态管理和中断依赖问题。
-> 6. **编译参数对齐卖家** — `-mfloat-abi=hard -mfpu=fpv4-sp-d16`，
->    `--specs=nano.specs`，链接完整 EDMA 驱动。
-> 7. **时钟配置** — FlexCAN0 PCC=CLK_SRC_OFF, peClkSrc=CAN_CLK_SOURCE_OSC
-> 8. 新增 `tools/can_setup.sh` 一键管理 can0 接口。
+**Bug 修复记录**: 参见 [BugfixLog.md](BugfixLog.md)
 
 **验证方法**:
 ```
 S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ──── candump can0
-  每 ~1.7s 发送 0x123#XXXXXXXXAA55AA55 ──→  捕获 ID=0x123
-  cansend can0 100#AABBCCDD ──→  MCU Can_Read 接收 → LED 翻转
+  MCU 周期发送 0x123#XXXXXXXXXX... ──→  捕获 ID=0x123
+  cansend can0 100#AABBCCDD ──→  MCU RX 中断 → Can_MainFunctionRx → CanIf → PduR → CanTp
 ```
 
 ### 任务 2: UART 日志输出
@@ -102,16 +93,18 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ### 任务 3: GPIO 按键输入
 **涉及**: `mcu/MCAL/Gpio/`, `mcu/MCAL/Port/`, `mcu/EcuAbstraction/IoHwAb/`
-- [ ] Port_SetMuxMode 引脚复用配置
-- [ ] Gpio_Init 输入模式 + 中断配置
+- [x] Gpio_Init / Gpio_ReadChannel / Gpio_WriteChannel / Gpio_FlipChannel (AUTOSAR 对齐)
+- [ ] Port_SetPinDirection 引脚方向配置
 - [ ] IoHwAb_ReadPin 抽象封装
 - [ ] 按键中断 ISR → 更新共享缓冲区
 
 ### 任务 4: MCU 时钟配置
 **涉及**: `mcu/MCAL/Mcu/`
-- [ ] Mcu_InitClock 完整实现
-- [ ] clock_config.c (SPLL 40MHz → 各外设时钟)
-- [ ] Mcu_GetCoreFreq 实现
+- [x] Mcu_Init 实现 (替代 Mcu_InitClock, Std_ReturnType)
+- [x] Mcu_GetCoreFreq 实现
+- [x] Mcu_GetResetReason 实现
+- [x] Mcu_PerformReset 实现
+- [ ] clock_config.c SPLL 配置
 
 ### 任务 5: SPI 驱动
 **涉及**: `mcu/MCAL/Spi/`
@@ -125,8 +118,9 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ### 任务 6: CanIf 接口
 **涉及**: `mcu/EcuAbstraction/CanIf/`
-- [ ] CanIf_Transmit → 调用 Can_Transmit
-- [ ] CanIf_RxIndication 回调机制
+- [x] CanIf_Transmit → Can_Write (HTH 编码, PDU→CAN ID 查表)
+- [x] CanIf_RxIndication 回调机制 → CanIf_McalRxCallback + PDU ID 翻译
+- [x] CanIf_Init 向 MCAL 注册 RX 回调 (Can_RegisterRxCallback)
 
 ### 任务 7: SpiIf 接口
 **涉及**: `mcu/EcuAbstraction/SpiIf/`

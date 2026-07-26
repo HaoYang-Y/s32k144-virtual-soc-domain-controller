@@ -14,7 +14,7 @@
 >
 > S32K144 开发板采集 GPIO 按键，通过 SPI/CAN/UART 与 Ubuntu 虚拟机通信，
 > SOC 端差分解码后通过 SOME/IP 服务和 CAN 帧发布到其他域控制器。
-> 代码按 AUTOSAR CP 四层（MCAL/ECU Abstraction/RTE/SWC）和 AP 三层（Platform/Service/Communication）组织，
+> 代码按 AUTOSAR CP 六层（MCAL/ECU Abstraction/CDD/Services/RTE/SWC）和 AP 三层（Platform/Communication/App）组织，
 > 模拟真实车载域控制器架构。
 
 ---
@@ -45,44 +45,47 @@
 
 > CAN 是域控制器的核心通信手段，UART 是调试的基础。这两个是当前最高优先级。
 
-### P1 — MCAL 外设驱动（骨架已有，待验证）
+### P1 — MCAL 外设驱动（部分已验证）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 3 | **GPIO 按键输入** | MCAL/Gpio, MCAL/Port | `mcu/MCAL/Gpio/src/Gpio.c`, `mcu/MCAL/Port/src/Port.c` | ⏳ 骨架已有 |
-| 4 | **MCU 时钟配置** | MCAL/Mcu | `mcu/MCAL/Mcu/src/Mcu.c`, `mcu/MCAL/Mcu/src/clock_config.c` | ⏳ 骨架已有 |
+| 3 | **GPIO 按键输入** | MCAL/Gpio, MCAL/Port | `mcu/MCAL/Gpio/src/Gpio.c`, `mcu/MCAL/Port/src/Port.c` | ✅ AUTOSAR 对齐 |
+| 4 | **MCU 时钟配置** | MCAL/Mcu | `mcu/MCAL/Mcu/src/Mcu.c`, `mcu/MCAL/Mcu/src/clock_config.c` | ✅ AUTOSAR 对齐 |
 | 5 | **SPI 驱动** | MCAL/Spi | `mcu/MCAL/Spi/src/Spi.c` | ⏳ 骨架已有 |
 | 6 | **IoHwAb 硬件抽象** | EcuAbstraction/IoHwAb | `mcu/EcuAbstraction/IoHwAb/src/IoHwAb.c` | ⏳ 骨架已有 |
 
-### P2 — ECU 抽象层 + RTE（骨架已有，依赖 P1）
+### P2 — ECU 抽象层 + Services + RTE（骨架已有，部分已验证）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ⏳ 骨架已有 |
-| 8 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
-| 9 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
+| 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 分层回调 + 中断 RX |
+| 8 | **CanTp 传输层** | Services/CanTp | `mcu/Services/CanTp/src/CanTp.c` | ✅ SF/FF/MF 分段 + FC 流控 |
+| 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ CanTp→Com 最小路由 |
+| 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 统一调度 |
+| 11 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
+| 12 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
 
 ### P3 — SWC 信号采集 + 全链路（依赖 P2）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 10 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` | ⏳ 骨架已有 |
-| 11 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
+| 13 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` | ⏳ 骨架已有 |
+| 14 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
 
 ### P4 — SOC 端服务（依赖 P3）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 12 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
-| 13 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
-| 14 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
+| 15 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
+| 16 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
+| 17 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
 
 ### P5 — 远期规划
 
 | # | 任务 | 涉及模块 | 状态 |
 |---|------|---------|------|
-| 15 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
-| 16 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
+| 18 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
+| 19 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
 
 ---
 
@@ -165,8 +168,8 @@ PC (宿主机)
          ↓        把 MCAL 的硬件操作抽象为业务层可用的接口
 第三阶段：RTE + SWC 应用层（Rte.h + Swc_SignalGateway）
          ↓        零开销宏连接 SWC 和底层驱动
-第四阶段：CAN 通信（FlexCAN 收发 + DBC 编解码）
-         ↓        附 CP Can/CanIf/PduR/Com 概念
+第四阶段：CAN 通信栈（FlexCAN 收发 + CanTp 传输 + DBC 编解码）
+         ↓        附 CP Can/CanIf/CanTp/PduR/Com 概念
 第五阶段：SPI 通信（32B 固定帧 + 差分协议 + CRC8）
          ↓        附 CP Spi/Com Stack 概念
 第六阶段：SOME/IP 服务通信（vsomeip + SD + Event）
@@ -310,9 +313,9 @@ lsusb -d 1d50:606f
 
 **2. MCU 端 — 上电运行**
 
-烧录后 MCU 自动以 500kbps 发送 CAN 消息：
-- TX CAN ID: `0x123`，RX CAN ID: `0x100`
-- 数据: 8 字节（2 字节递增计数器 + `AA 55 AA 55 00 00`）
+烧录后 MCU 以 500kbps 收发 CAN 消息（中断驱动 RX）：
+- TX CAN ID: `0x123`（CanTp SF/MF 交替），RX CAN ID: `0x100`
+- 架构: 多路 CAN (HTH 编码 Controller+MB), 分层回调 (CanIf_McalRxCallback)
 - LED: 绿闪=心跳, 橙=TX, 红=错误, 蓝=RX
 
 **3. 预期输出**
@@ -383,6 +386,6 @@ cmake .. && make -j$(nproc)
 
 > **一句话总结**
 >
-> GPIO 物理信号 → MCU CP 四层处理（MCAL→ECU Abstraction→RTE→SWC）→ SPI / CAN / UART 输出
+> GPIO 物理信号 → MCU CP 六层处理（MCAL→ECU Abstraction→Services→RTE→SWC）→ SPI / CAN / UART 输出
 > → SOC AP 三层处理（Platform→Communication→App）→ SOME/IP + CAN 发布。
 > 从寄存器到服务，逐层递进，模拟真实车载域控制器链路。
