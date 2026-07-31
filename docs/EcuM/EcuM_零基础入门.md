@@ -218,9 +218,12 @@ main() 启动
 
 main() while(1):
   └─ EcuM_MainFunction()
-       ├─ CanTp_MainFunction()  ← 驱动 CAN TP 流控状态机
-       └─ Can_MainFunctionRx()  ← 消费 CAN RX 中断数据
+       ├─ CanTp_MainFunction()   ← 驱动 CAN TP 流控状态机
+       ├─ Can_MainFunctionRx()   ← 消费 CAN RX 中断数据
+       └─ Can_MainFunctionWrite()← 消费 CAN TX 完成确认
 ```
+
+> **Can_MainFunctionWrite 是干嘛的？** CAN 发送是"请求→确认"两步式：`Can_Write` 把帧交给硬件后，硬件发完会中断置标志，这个函数轮询标志并回调上层（CanIf → PduR → CanTp）。**不加这一行，发送确认链就断了**——SF 的 N_As 超时永远等不到确认，上层永远不知道帧有没有发出去。
 
 **关键设计决策**：`CLOCK_DRV_Init`、`Port_Init`、`Can_Init`、`Can_EnableInterrupts` 全部在 `EcuM_Init()` 中统一调度。main.c 只调 `EcuM_Init()` + `EcuM_MainFunction()`，不包含任何 MCAL 头文件。CAN 硬件配置（`Can_Config`）定义在 `Can_Cfg.c` 中，通过 `Can_Cfg.h` 以 `extern` 方式暴露给 EcuM 引用。
 
@@ -242,8 +245,9 @@ main() while(1):
 
 ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1kHz），负责驱动所有 BSW 模块的周期处理：
 
-- **CanTp_MainFunction()**：驱动 CAN TP 流控状态机（WAIT_FC 超时 / SENDING_CF 按 STmin/BS 节奏发 CF / RECEIVING 超时）
+- **CanTp_MainFunction()**：驱动 CAN TP 流控状态机（N_As / WAIT_FC 超时 / SENDING_CF 按 STmin/BS 节奏发 CF / RECEIVING 超时）
 - **Can_MainFunctionRx()**：消费 CAN RX 中断数据（ISR 标记 → 读 frame → CanIf → PduR → CanTp 重组）
+- **Can_MainFunctionWrite()**：消费 CAN TX 完成确认（ISR 标记 → 回调 CanIf → PduR → CanTp）
 - （后续）监控休眠/关机请求，协调 BswM 模式切换
 
 ### 4.3 关机管理 (Shutdown)
@@ -342,7 +346,7 @@ ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1k
 | `Can_Init` + `CanIf_Init` 集成 | ✅ | EcuM_Init() MCAL + Abstraction 层 |
 | `PduR_Init` + `CanTp_Init` 集成 | ✅ | EcuM_Init() Services 层 |
 | `Can_EnableInterrupts` 集成 | ✅ | EcuM_Init() MCAL 层末尾 |
-| `EcuM_MainFunction()` | ✅ | CanTp 状态机 + CAN RX 消费 |
+| `EcuM_MainFunction()` | ✅ | CanTp 状态机 + CAN RX 消费 + CAN TX 确认 |
 | `EcuM_SetState()` | ✅ | 状态切换 API |
 | `EcuM_SelectShutdownTarget()` | 🟡 骨架 | 函数已定义，逻辑待实现 |
 

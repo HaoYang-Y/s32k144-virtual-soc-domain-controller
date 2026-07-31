@@ -314,15 +314,17 @@ EcuM_Init()
   ├─ Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0)  ← 多路 CAN，指定控制器
   ├─ Can_SetControllerMode(STARTED)
   ├─ Can_EnableInterrupts()        ← 武装所有 RX MB（在 CanIf_Init 之前）
-  ├─ CanIf_Init()                  ← 内部注册 Can_RegisterRxCallback
+  ├─ CanIf_Init()                  ← 内部注册 RX 回调 + TX 回调
   ├─ PduR_Init()
   └─ CanTp_Init()
 
 EcuM_MainFunction() (main 循环):
   ├─ CanTp_MainFunction()
-  ├─ Can_MainFunctionRx()          ← RX 消费
-  └─ Can_MainFunctionWrite()       ← TX 确认（预留 CanIf_TxConfirmation）
+  ├─ Can_MainFunctionRx()          ← RX 消费: ISR 标记 → 回调 CanIf_RxIndication
+  └─ Can_MainFunctionWrite()       ← TX 确认: ISR 标记 → 回调 CanIf_TxConfirmation
 ```
+
+> **一句话理解 TX 确认链**：`Can_Write` 只是"把帧交给硬件"，硬件真正发完会触发中断。中断把"发完了"这件事记在 `txComplete[]` 标志里，`Can_MainFunctionWrite` 轮询到标志后，通过注册的回调告诉上层——这就是"请求→确认"两步式：上层发出请求后不是立即知道结果，而是等 Can 驱动主动汇报"完成"。
 
 ---
 

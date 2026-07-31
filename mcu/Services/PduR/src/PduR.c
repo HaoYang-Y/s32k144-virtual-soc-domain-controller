@@ -60,14 +60,27 @@ void PduR_CanTpRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
 }
 
 /**
- * @brief CanIf → PduR → CanTp/Com 发送确认
+ * @brief CanIf → PduR → CanTp: N-PDU 发送完成确认
  *
- * @note  CanTp 在以下场景会收到此回调:
- *        - SF 发送完成 (CanIf → PduR → CanTp)
- *        - 最后一个 CF 发送完成 (MainFunction 直接调用)
- *        后续 Com 实现后需根据源模块路由确认。
+ * @note  Can 驱动完成一帧发送后，经 CanIf_TxConfirmation 到达此处。
+ *        当前无路由表，直接路由到 CanTp (N-PDU 级确认，由 CanTp 聚合为
+ *        I-PDU 级确认后向上通知)。后续 Com 实现后按路由表分发。
  */
 void PduR_CanIfTxConfirmation(PduIdType TxPduId)
 {
     LOG_D("PduR", "CanIfTxConfirmation: PduId=%u", (unsigned int)TxPduId);
+    CanTp_TxConfirmation(TxPduId);
+}
+
+/**
+ * @brief CanTp → PduR → Com: I-PDU 发送完成确认
+ *
+ * @note  CanTp 完成整个 I-PDU (SF 单帧 / MF 全部分段) 发送后调用。
+ *        当前 Com 未实现，仅记录日志；后续路由到 Com_TxConfirmation。
+ */
+void PduR_CanTpTxConfirmation(PduIdType TxPduId)
+{
+    LOG_D("PduR", "CanTpTxConfirmation: PduId=%u (I-PDU sent)",
+          (unsigned int)TxPduId);
+    /* TODO: Com_TxConfirmation(routedComPduId); */
 }

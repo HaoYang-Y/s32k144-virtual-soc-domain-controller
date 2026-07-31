@@ -219,19 +219,16 @@ CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 
 已实现功能：
 - `CanIf_Transmit` — PDU 查表 → 格式转换 → `Can_Write`（完整实现）
-- `CanIf_RxIndication` — PDU ID 校验 → 日志记录（实现，PduR 转发预留）
-- `CanIf_TxConfirmation` — DET 检查 → 日志记录（实现，PduR 转发预留）
+- `CanIf_RxIndication` — PDU ID 校验 → 转发 `PduR_CanIfRxIndication`（完整实现）
+- `CanIf_TxConfirmation` — 发送完成确认 → 转发 `PduR_CanIfTxConfirmation`（完整实现）
+- **TX 完成回调**：`CanIf_McalTxCallback` 注册到 MCAL，发送完成时按 HTH 反查 PDU ID（完整实现）
 - DET 错误检测框架（ModuleId=0x32, 3 种 ErrorId）
 - `CanIf_FindPduIdByCanId` — CAN ID → PDU ID 反查（RX 路径辅助）
 - 配置表由 `signals.yaml` 自动生成（`CanIf_Cfg.c` + `CanIf_PduId.h`）
 
-待后续补全：
-- `CanIf_RxIndication` → 转发给 `PduR_CanIfRxIndication`（等 PduR 层实现）
-- `CanIf_TxConfirmation` → 转发给 `PduR_CanIfTxConfirmation`（等 PduR 层实现）
-
 ---
 
-### 2.3 CanTp — CAN Transport Layer（骨架）
+### 2.3 CanTp — CAN Transport Layer（已实现）
 
 **职责**：实现 ISO 15765-2 多帧传输协议。当 PDU 超过 8 字节时进行分包/重组。
 
@@ -267,7 +264,9 @@ typedef enum {
     (最后数据)
 ```
 
-**当前状态**：已激活，由 EcuM 编译和初始化。PCI 编解码 + SF/FF/CF/FC 状态机已实现（TX 简化 FC 等待，RX 含 FC 回复）。详见 [4_N-PDU网络层协议数据单元详解](./4_N-PDU网络层协议数据单元详解.md)。
+**当前状态**：已激活，由 EcuM 编译和初始化。PCI 编解码 + SF/FF/CF/FC 状态机完整实现（TX 发 FF 后等待 FC 流控，RX 收 FF 后自动回 FC）。另实现：
+- **TX 确认链**：SF 发送完成经 CanIf→PduR 回到 `CanTp_TxConfirmation`，支持 N_As 超时（详见 [5_CanTp_CAN传输层详解](./5_CanTp_CAN传输层详解.md)）
+- 超时保护：N_As（SF 确认）/ N_Bs（等 FC）/ N_Cr（等 CF）
 
 ---
 
@@ -296,10 +295,11 @@ Com、CanTp、SpiIf（CAN 之外的通信总线接口）等模块之间转发 PD
 void    PduR_Init(void);
 Std_ReturnType PduR_ComTransmit(PduIdType PduId, const PduInfoType *PduInfoPtr);
 void           PduR_CanIfRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
-void           PduR_CanIfTxConfirmation(PduIdType TxPduId);
+void           PduR_CanIfTxConfirmation(PduIdType TxPduId);   // N-PDU 发送确认
+void           PduR_CanTpTxConfirmation(PduIdType TxPduId);   // I-PDU 发送确认
 ```
 
-**当前状态**：已激活，由 EcuM 编译和初始化。路由表已配置，路由逻辑 WIP。
+**当前状态**：已激活，由 EcuM 编译和初始化。当前为直通模式（确认/接收统一转发给 CanTp，无路由表）。`PduR_CanIfTxConfirmation` → CanTp（N-PDU 级）；`PduR_CanTpTxConfirmation` → 预留 Com（I-PDU 级）。Com 实现后引入路由表。
 
 ---
 

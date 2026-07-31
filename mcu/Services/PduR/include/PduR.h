@@ -25,7 +25,10 @@ void           PduR_CanIfRxIndication(PduIdType RxPduId, const PduInfoType *PduI
 /** @brief CanTp → PduR → Com: CanTp 重组完成后的 I-PDU 向上交付 */
 void           PduR_CanTpRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
 
-/** @brief CanIf → PduR → Com 发送确认 */
+/** @brief CanIf → PduR → CanTp: N-PDU 发送完成确认 */
 void           PduR_CanIfTxConfirmation(PduIdType TxPduId);
+
+/** @brief CanTp → PduR → Com: I-PDU 发送完成确认 */
+void           PduR_CanTpTxConfirmation(PduIdType TxPduId);
 
 #endif /* PDUR_H */

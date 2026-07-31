@@ -10,7 +10,7 @@
  *          PduInfoType → Can_PduType 的格式转换发生在此层：
  *            N-PDU (PduInfoType, 指针+长度) → L-PDU (Can_PduType, 固定8字节)
  *
- *          当前 TX HTH=0, RX HRH=1 (与 main.c 硬件 mailbox 配置一致)
+ *          每个 TX PDU 的 HTH 存于 CanIf_PduConfig[].hth (由生成脚本写入)。
  */
 
 #include "CanIf.h"
@@ -40,15 +40,6 @@
 #define CANIF_E_PARAM          0x01U   /* 参数错误 (NULL pointer)    */
 #define CANIF_E_UNINIT         0x02U   /* 模块未初始化              */
 #define CANIF_E_INVALID_PDU_ID 0x03U   /* 无效的 PDU ID            */
-
-/* ===================================================================
- *  HTH / HRH (Hardware Transmit/Receive Handle)
- *  当前写死与 main.c 的 TX_MB=0 / RX_MB=1 一致
- *  后续可移入 CanIf_PduConfigType 扩展字段
- * =================================================================== */
-/* HTH = Controller 0, TX MB 0 */
-#define CANIF_TX_HTH  CAN_HTH_MAKE(CAN_CONTROLLER_0, 0U)
-#define CANIF_RX_HRH  1U
 
 /* ===================================================================
  *  模块状态
@@ -109,9 +100,24 @@ static void CanIf_McalRxCallback(Can_ControllerType Controller,
     }
 }
 
+/* MCAL Can TX 回调 — (Controller, MB) 反查 PDU ID 后调用 CanIf_TxConfirmation */
+static void CanIf_McalTxCallback(Can_ControllerType Controller, uint8_t MbIndex)
+{
+    Can_HwHandleType hth = CAN_HTH_MAKE(Controller, MbIndex);
+
+    for (uint8_t i = 0U; i < CanIf_PduConfig_Count; i++) {
+        if (CanIf_PduConfig[i].hth == hth) {
+            CanIf_TxConfirmation(CanIf_PduConfig[i].pdu_id);
+            return;
+        }
+    }
+    LOG_W("CanIf", "TX confirm: no PDU for HTH=0x%04X", (unsigned int)hth);
+}
+
 void CanIf_Init(void)
 {
     Can_RegisterRxCallback(CanIf_McalRxCallback);
+    Can_RegisterTxCallback(CanIf_McalTxCallback);
 
     canif_state = 1U;
     LOG_I("CanIf", "Init done, %u controller(s), %u PDU(s)",
@@ -214,8 +220,8 @@ Std_ReturnType CanIf_Transmit(PduIdType TxPduId, const PduInfoType *PduInfoPtr)
         }
     }
 
-    /* 3. 调用 MCAL Can_Write (AUTOSAR 标准签名: 只传 HTH) */
-    Std_ReturnType ret = Can_Write(CANIF_TX_HTH, &canPdu);
+    /* 3. 调用 MCAL Can_Write (AUTOSAR 标准签名: 只传 HTH, 来自配置表) */
+    Std_ReturnType ret = Can_Write(cfg->hth, &canPdu);
 
     if (ret != E_OK) {
         LOG_E("CanIf", "Transmit: Can_Write failed (PduId=%u, CanId=0x%lX)",

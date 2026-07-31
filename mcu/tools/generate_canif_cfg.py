@@ -146,6 +146,18 @@ def generate_pdu_id_header(pdus, output_dir):
     return filepath
 
 
+def pdu_hth_str(pdu):
+    """
+    生成 TX PDU 的 HTH 值表达式。
+
+    当前: 固定使用 Controller 0 + TX MB 0 (与 Can_Cfg.c 单 TX MB 一致)。
+    扩展: 多 TX MB 时从 YAML 增加 'hth_mb' 字段，此处改为读取该字段。
+    """
+    if pdu['direction'] == 'tx':
+        return 'CAN_HTH_MAKE(0U, 0U)'
+    return '0U'
+
+
 def generate_canif_cfg_c(pdus, output_dir):
     """生成 CanIf_Cfg.c — CanIf_PduConfig[] 数组定义"""
     filepath = os.path.join(output_dir, 'CanIf_Cfg.c')
@@ -153,6 +165,7 @@ def generate_canif_cfg_c(pdus, output_dir):
     content += """
 #include "CanIf_Cfg.h"
 #include "CanIf_PduId.h"
+#include "Can.h"   /* CAN_HTH_MAKE — TX 条目 hth 字段 */
 
 /* ===================================================================
  *  CanIf PDU 配置表（对标 AUTOSAR CanIf_PduConfigType）
@@ -166,7 +179,7 @@ const CanIf_PduConfigType CanIf_PduConfig[CANIF_PDU_COUNT] = {
     for pdu in pdus:
         macro = pdu_macro_name(pdu)
         can_id_str = f"0x{pdu['can_id']:08X}UL" if isinstance(pdu['can_id'], int) else f"{pdu['can_id']}UL"
-        content += f"    {{{macro}, 0U, {can_id_str}, {pdu['dlc']}U}},"
+        content += f"    {{{macro}, 0U, {can_id_str}, {pdu['dlc']}U, {pdu_hth_str(pdu)}}},"
         content += f"  /* {pdu['direction'].upper()}: CAN ID 0x{pdu['can_id']:X} */\n" if isinstance(pdu['can_id'], int) else f"  /* {pdu['direction'].upper()}: CAN ID {pdu['can_id']} */\n"
 
     content += """};

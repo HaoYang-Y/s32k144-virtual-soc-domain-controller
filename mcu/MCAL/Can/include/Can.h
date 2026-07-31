@@ -142,6 +142,14 @@ typedef void (*Can_RxNotificationType)(Can_ControllerType Controller,
 
 void Can_RegisterRxCallback(Can_RxNotificationType callback);
 
+/** @brief TX 完成通知回调 — 上层模块注册，Can.c 在发送完成后调用
+ *  @param Controller  完成发送的控制器 ID
+ *  @param MbIndex     完成发送的 TX Mailbox 索引 (与 HTH 低字节一致) */
+typedef void (*Can_TxConfirmationType)(Can_ControllerType Controller,
+                                       uint8_t MbIndex);
+
+void Can_RegisterTxCallback(Can_TxConfirmationType callback);
+
 /** @brief 周期调用: 所有控制器的 ISR 标记 → 消费 → 回调 */
 bool Can_MainFunctionRx(void);
 

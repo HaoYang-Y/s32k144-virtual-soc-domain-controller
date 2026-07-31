@@ -160,7 +160,13 @@ FC 是整个 CanTp 协议最有价值的发明。它承载三种回应：
 | **等待** (WAIT_FC) | `CanTp_MainFunction` 检查超时；`CanTp_RxIndication` 收到 FC 后推进 | 等对方给指令 |
 | **发送** (SENDING_CF) | `CanTp_MainFunction` | 按 STmin 间隔 + BS 块大小逐帧发 CF |
 
-> **关键设计**：Transmit 只负责"启动"，CF 的实际发送在 MainFunction 中异步完成。这就是为什么 `CanTp_Transmit` 返回 `E_OK` 不等于数据已全部发出——它只是"已受理"。真正的完成通知走 `PduR_CanIfTxConfirmation` 回调。
+> **关键设计**：Transmit 只负责"启动"，CF 的实际发送在 MainFunction 中异步完成。这就是为什么 `CanTp_Transmit` 返回 `E_OK` 不等于数据已全部发出——它只是"已受理"。真正的完成通知走 `PduR_CanTpTxConfirmation` 回调（I-PDU 级确认）。
+
+> **两类确认，别混淆**（初学者最容易绕晕的地方）：
+> - **N-PDU 级确认**：`CanIf_TxConfirmation` → `PduR_CanIfTxConfirmation` → `CanTp_TxConfirmation`。表示"**某一帧**（SF 或某个 CF）已经发到总线上了"
+> - **I-PDU 级确认**：`PduR_CanTpTxConfirmation`。表示"**整个消息**（SF 单帧 / MF 全部分段）都发完了"
+>
+> SF 场景下两者等价（一帧 = 整个消息）；MF 场景下 CanTp 要把每个 CF 的 N-PDU 确认聚合起来，全部完成才算 I-PDU 完成。当前实现是简化模式：MF 由 MainFunction 发完最后一片即确认（不等最后一帧的硬件确认，靠 `CAN_Send` 返回值兜底），SF 才真正等 CanIf 确认。
 
 ---
 
@@ -178,8 +184,11 @@ FC 是整个 CanTp 协议最有价值的发明。它承载三种回应：
 
 | 超时 | 触发条件 | 后果 |
 |------|---------|------|
+| **N_As** | 发出 SF 后 1000ms 没收到发送确认 | 清掉待确认标志，报错（帧丢了或硬件卡住） |
 | **N_Bs** | 发出 FF 后 1000ms 没收到 FC | 放弃本次发送，回 IDLE |
 | **N_Cr** | 进入 RECEIVING 后 1000ms 没收到下一个 CF | 丢弃已接收数据，回 IDLE |
+
+> **N_As 是 TX 确认链的配套**：SF 发出后，CanTp 记一个"待确认"标志（`tx_sf_pending`）。等 `CanTp_TxConfirmation` 回调把标志清掉 = 确认到达；如果 1000ms 都没等到，说明这一帧没发出去（总线错误、硬件卡死等），报错并复位。**没有这条链，发送方永远不知道自己发的帧丢了**。
 
 > **注意**：单 MCU 学习场景，如果没有 CAN 回环（外部短接线或内部 Loopback 模式），TX 发出的 FF 永远不会收到 FC → 触发 N_Bs 超时。这是正确行为，不是 bug。
 
@@ -202,12 +211,12 @@ mcu/Services/CanTp/
 |----|------|------|
 | 模块常量 | 23-48 | PCI 掩码、帧类型标识、FC 状态码 |
 | 通道结构体 | 54-77 | `CanTp_ChannelType` — 每个通道有 RX 上下文 + TX 上下文 + 定时器 |
-| CanTp_Init | 194-225 | 初始化 2 个通道，清空所有缓冲区 |
-| CanTp_Transmit | 227-321 | TX 入口：≤7B→SF 直发，>7B→FF+进入 WAIT_FC |
-| CanTp_RxIndication | 323-535 | RX 分发：SF 透传 / FF 回复 FC / CF 累积 / FC 控制 TX |
-| CanTp_MainFunction | 547-660 | 周期驱动：WAIT_FC 超时 / SENDING_CF 节奏 / RECEIVING 超时 |
-| CanTp_TxConfirmation | 662-668 | 发送确认（转发 PduR） |
-| PCI codec ×5 | 129-188 | SF/FF/CF/FC 的 PCI 构建 + 解码 |
+| CanTp_Init | 195-228 | 初始化 2 个通道，清空所有缓冲区 |
+| CanTp_Transmit | 229-330 | TX 入口：≤7B→SF 直发（置待确认标志），>7B→FF+进入 WAIT_FC |
+| CanTp_RxIndication | 331-554 | RX 分发：SF 透传 / FF 回复 FC / CF 累积 / FC 控制 TX |
+| CanTp_MainFunction | 555-686 | 周期驱动：N_As 超时 / WAIT_FC 超时 / SENDING_CF 节奏 / RECEIVING 超时 |
+| CanTp_TxConfirmation | 687-716 | 发送确认：SF 确认 → 清标志 + 上报 I-PDU 完成；MF 中间帧忽略 |
+| PCI codec ×5 | 130-192 | SF/FF/CF/FC 的 PCI 构建 + 解码 |
 
 > **提示**：第一次读代码建议按 TX 路径追踪——先看 `CanTp_Transmit`，再看 `CanTp_MainFunction` 的 `SENDING_CF` 分支，最后看 `CanTp_RxIndication` 的 `CANTP_FC` 分支。这三段串联起来就是完整的"FF→FC→CF→IDLE"状态机。
 

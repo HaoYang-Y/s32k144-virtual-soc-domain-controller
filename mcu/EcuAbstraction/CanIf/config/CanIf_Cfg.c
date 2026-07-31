@@ -8,6 +8,7 @@
 
 #include "CanIf_Cfg.h"
 #include "CanIf_PduId.h"
+#include "Can.h"   /* CAN_HTH_MAKE — TX 条目 hth 字段 */
 
 /* ===================================================================
  *  CanIf PDU 配置表（对标 AUTOSAR CanIf_PduConfigType）
@@ -17,8 +18,8 @@
  * =================================================================== */
 
 const CanIf_PduConfigType CanIf_PduConfig[CANIF_PDU_COUNT] = {
-    {CANIF_PDU_ID_TX_0x123, 0U, 0x00000123UL, 8U},  /* TX: CAN ID 0x123 */
-    {CANIF_PDU_ID_RX_0x100, 0U, 0x00000100UL, 8U},  /* RX: CAN ID 0x100 */
+    {CANIF_PDU_ID_TX_0x123, 0U, 0x00000123UL, 8U, CAN_HTH_MAKE(0U, 0U)},  /* TX: CAN ID 0x123 */
+    {CANIF_PDU_ID_RX_0x100, 0U, 0x00000100UL, 8U, 0U},  /* RX: CAN ID 0x100 */
 };
 
 const uint8_t CanIf_PduConfig_Count = CANIF_PDU_COUNT;

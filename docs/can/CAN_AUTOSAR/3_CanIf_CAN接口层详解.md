@@ -89,18 +89,23 @@ typedef struct {
     uint8_t   controller_id;  // 使用哪个 CAN 控制器 (0 = FlexCAN0)
     uint32_t  can_id;         // 对应的 CAN 报文 ID
     uint8_t   dlc;            // DLC (Data Length Code)，数据长度码 (1~8)
+    uint16_t  hth;            // HTH: 发送这个 PDU 用哪个 TX Mailbox (RX PDU 填 0)
 } CanIf_PduConfigType;
 ```
+
+> **hth 字段是干嘛的？** 一帧 CAN 报文从哪个 Mailbox 发出去，是硬件细节。把 HTH 放进配置表后，上层代码和 CanIf 逻辑都不用关心它——配置说用哪个就用哪个。这也是 **TX 确认链的基础**：硬件发完一帧后回报"哪个 Mailbox 发完了"，CanIf 靠 hth 字段反查出"这是哪个 PDU"，才能告诉上层"你的 PDU 0 发完了"。
 
 **本项目当前的配置表**（由 `signals.yaml` 自动生成，位于 `CanIf_Cfg.c`）：
 
 ```c
 const CanIf_PduConfigType CanIf_PduConfig[2] = {
-    // {pdu_id, controller, can_id,     dlc}
-    {0U,       0U,         0x00000123UL, 8U},   // PDU 0 → TX CAN ID 0x123
-    {1U,       0U,         0x00000100UL, 8U},   // PDU 1 → RX CAN ID 0x100
+    // {pdu_id, controller, can_id,     dlc, hth}
+    {0U,       0U,         0x00000123UL, 8U, CAN_HTH_MAKE(0U, 0U)},   // PDU 0 → TX CAN ID 0x123
+    {1U,       0U,         0x00000100UL, 8U, 0U},                     // PDU 1 → RX CAN ID 0x100
 };
 ```
+
+> `CAN_HTH_MAKE(0U, 0U)` = "控制器 0 的 TX Mailbox 0"。当前项目只有 1 个 TX Mailbox，所有 TX PDU 都从它发出；将来增加 TX Mailbox 时，每个 PDU 在配置里指定不同的 hth 即可，代码不用改。
 
 配套的 PDU ID 宏（`CanIf_PduId.h`）：
 
@@ -199,14 +204,14 @@ CanIf_Transmit(CANIF_PDU_ID_TX_0x123, &txPdu);
 
 此时 `txPdu` 里**没有 CAN ID**——只有 PDU 编号 0。
 
-**第 2 步：CanIf 查配置表，翻译 PDU ID → CAN ID**
+**第 2 步：CanIf 查配置表，翻译 PDU ID → CAN ID + HTH**
 
 ```c
 // CanIf.c — CanIf_Transmit() 内部
 // 配置表里存的映射关系 (从 signals.yaml 自动生成):
 //
-//   CanIf_PduConfig[0] = {.pdu_id=0, .can_id=0x123, .controller=0, .dlc=8}
-//   CanIf_PduConfig[1] = {.pdu_id=1, .can_id=0x100, .controller=0, .dlc=8}
+//   CanIf_PduConfig[0] = {.pdu_id=0, .can_id=0x123, .controller=0, .dlc=8, .hth=CAN_HTH_MAKE(0,0)}
+//   CanIf_PduConfig[1] = {.pdu_id=1, .can_id=0x100, .controller=0, .dlc=8, .hth=0}
 
 const CanIf_PduConfigType *cfg = CanIf_FindConfigByPduId(TxPduId);  // PDU 0 → can_id=0x123
 ```
@@ -239,8 +244,9 @@ canPdu.data[2] = PduInfoPtr->SduDataPtr[2];  // 0xAA
 
 ```c
 // CanIf.c — 最后一步：调用 MCAL (AUTOSAR 标准签名：只传 HTH)
-Std_ReturnType ret = Can_Write(CANIF_TX_HTH, &canPdu);
+Std_ReturnType ret = Can_Write(cfg->hth, &canPdu);
 //                                   ↑
+//                   HTH 不写死，来自配置表 (CanIf_PduConfig[].hth)
 //                   Can_PduType 已包含完整的 CAN ID + 数据
 //                   Can_Write 内部: CAN_ConfigTxBuff → CAN_Send → 硬件发送
 ```
@@ -382,10 +388,12 @@ CanIf_Transmit(TxPduId=0, PduInfoPtr)
   │      for i: canPdu.data[i] = PduInfoPtr->SduDataPtr[i]  // 逐字节拷贝
   │
   └── 4. 调用 MCAL (AUTOSAR 标准: 只传 HTH)
-           ret = Can_Write(CANIF_TX_HTH(=0), &canPdu)
+           ret = Can_Write(cfg->hth, &canPdu)   // hth 从配置表取
            → E_OK      → 返回 E_OK
            → E_NOT_OK  → LOG_E + 返回 E_NOT_OK
 ```
+
+> **第 4 步的"坑"**：`Can_Write` 返回 `E_OK` 只代表"帧已被硬件接收（排队发送）"，**不代表已经发到总线上**。真正发完的确认由 TX 确认链负责（见 [5.4](#54-canif_txconfirmation--对标-autosar-swscanif_00211)）——这是 AUTOSAR 与普通裸机开发的最大思维差异之一。
 
 > ⚠️ **踩坑记录**：第 3 步 `canPdu = {0}` 必须全量初始化。我们最初只赋值了 `id`/`length`/`data`，漏了 `is_extended` 和 `is_remote`。栈上的垃圾值导致标准帧被当扩展帧发出，CANable 完全收不到。板子指示灯全正常，就是总线上没数据。根因是 `Can_PduType` 含 `bool` 字段（见 [2_MCAL_Can驱动详解 §3.1](./2_MCAL_Can驱动详解.md) 踩坑记录），CanIf 的修复方法是 `= {0}` 全量零初始化。
 
@@ -427,7 +435,7 @@ if (pduId < CANIF_PDU_COUNT) {
 }
 ```
 
-**内部流程**：DET 检查 → PDU ID 校验（查表确认存在）→ 日志记录 → [预留] PduR 转发。
+**内部流程**：DET 检查 → PDU ID 校验（查表确认存在）→ 日志记录 → 转发 `PduR_CanIfRxIndication`（已实现）。
 
 ---
 
@@ -439,7 +447,24 @@ void CanIf_TxConfirmation(PduIdType TxPduId);
 
 > **AUTOSAR 规范定义**：CAN 驱动发送完成后，通过此函数向 CanIf 层确认。CanIf 处理完成后转发确认给 PduR 层。
 
-当前实现：DET 检查 + 日志记录。PduR 转发预留。
+**为什么要这个函数？** 回想 5.2 的提醒：`Can_Write` 返回 `E_OK` 只是"帧被硬件接收"，不是"发完了"。那上层怎么知道"发完了"？——靠这条**TX 确认链**：
+
+```
+硬件发完一帧 → 中断 → Can_MainFunctionWrite 发现标志
+  → 回调 CanIf_McalTxCallback(Controller, MbIndex)   ← CanIf 注册到 MCAL 的回调
+  → 用 (Controller, MbIndex) 构造 HTH，查配置表反查 PDU ID
+  → CanIf_TxConfirmation(PduId)
+  → PduR_CanIfTxConfirmation → CanTp_TxConfirmation（推进发送状态机）
+```
+
+打个比方：`Can_Write` 是"把快递单递给快递员"（E_OK = 快递员接单了），TX 确认链是"快递员送完回来汇报"（TxConfirmation = 已送达）。**上层必须等确认才知道真发完了**。
+
+**当前实现**（完整）：
+1. `CanIf_McalTxCallback` — MCAL 发送完成回调，按 HTH 反查 PDU ID（找不到打 LOG_W）
+2. `CanIf_TxConfirmation` — DET 检查 → 日志 → 转发 `PduR_CanIfTxConfirmation`
+3. 注册动作在 `CanIf_Init()` 里：`Can_RegisterTxCallback(CanIf_McalTxCallback)`（与 RX 回调对称）
+
+> **为什么 HTH 要进配置表？** 回调只拿到"哪个 Controller 的哪个 Mailbox 发完了"，CanIf 必须反查这是哪个 PDU。如果 HTH 写死，多 TX PDU 场景就分不清了。放进配置表后，反查就是"遍历表找 hth 匹配"（[2.2 节](#22-canif_pduconfigtype--pdu-到-can-的映射)的 `hth` 字段）。
 
 ---
 

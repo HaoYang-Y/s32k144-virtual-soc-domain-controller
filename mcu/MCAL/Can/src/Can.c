@@ -46,6 +46,7 @@ typedef struct {
 static Can_CtrlState Can_Ctrl[CAN_CONTROLLER_MAX];
 
 static Can_RxNotificationType Can_RxCallback = NULL;
+static Can_TxConfirmationType Can_TxCallback = NULL;
 
 /* ===================================================================
  *  内部: MCAL 配置 → PAL 配置 转换
@@ -279,6 +280,11 @@ void Can_RegisterRxCallback(Can_RxNotificationType callback)
     Can_RxCallback = callback;
 }
 
+void Can_RegisterTxCallback(Can_TxConfirmationType callback)
+{
+    Can_TxCallback = callback;
+}
+
 bool Can_MainFunctionRx(void)
 {
     bool got_frame = false;
@@ -319,7 +325,10 @@ void Can_MainFunctionWrite(void)
         for (uint8_t i = 0U; i < c->txCount; i++) {
             if (c->txComplete[i]) {
                 c->txComplete[i] = false;
-                /* TODO: 通知上层 CanIf_TxConfirmation */
+                /* 通知上层 (CanIf) TX 完成 — 由上层翻译为 PDU ID 后确认 */
+                if (Can_TxCallback != NULL) {
+                    Can_TxCallback((Can_ControllerType)ctrl, i);
+                }
             }
         }
     }

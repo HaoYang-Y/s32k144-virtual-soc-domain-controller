@@ -20,6 +20,7 @@ typedef struct {
     uint8_t   controller_id;
     uint32_t  can_id;
     uint8_t   dlc;
+    uint16_t  hth;   /* TX: 硬件发送句柄 (Controller+MB 编码); RX: 填 0 无意义 */
 } CanIf_PduConfigType;
 
 extern const CanIf_PduConfigType CanIf_PduConfig[];

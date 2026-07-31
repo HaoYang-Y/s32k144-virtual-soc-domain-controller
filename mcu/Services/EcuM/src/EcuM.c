@@ -62,6 +62,9 @@ void EcuM_MainFunction(void)
 
     /* RX: ISR 标记 → 消费 CAN 帧 → CanIf → PduR → CanTp 重组 */
     (void)Can_MainFunctionRx();
+
+    /* TX: ISR 标记 → 消费 TX 完成 → 回调 CanIf → PduR → CanTp 确认 */
+    Can_MainFunctionWrite();
 }
 
 void EcuM_SelectShutdownTarget(void)

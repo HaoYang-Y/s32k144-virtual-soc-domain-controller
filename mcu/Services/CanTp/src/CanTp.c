@@ -71,7 +71,8 @@ typedef struct {
     uint8_t          tx_fc_bs;                  /* Block Size (从 FC 帧提取) */
     uint8_t          tx_fc_stmin_ms;            /* STmin 转换为 ms */
     uint8_t          tx_block_cf_sent;          /* 当前块内已发送 CF 数 */
-    uint32_t         tx_state_enter_ms;         /* 进入 WAIT_FC 状态时的时刻 (N_Bs 超时) */
+    bool             tx_sf_pending;             /* SF 已发送, 等待 CanIf 确认 (N_As 超时) */
+    uint32_t         tx_state_enter_ms;         /* WAIT_FC 或 SF 等待确认的时刻 (N_Bs/N_As 超时) */
     uint32_t         tx_last_cf_ms;             /* 上次发送 CF 的时刻 (STmin 间隔) */
     uint32_t         rx_state_enter_ms;         /* 进入 RECEIVING 状态时的时刻 (N_Cr 超时) */
 } CanTp_ChannelType;
@@ -211,6 +212,7 @@ void CanTp_Init(void)
         CanTp_Channels[i].tx_fc_bs         = 0U;
         CanTp_Channels[i].tx_fc_stmin_ms   = 0U;
         CanTp_Channels[i].tx_block_cf_sent = 0U;
+        CanTp_Channels[i].tx_sf_pending    = false;
         CanTp_Channels[i].tx_state_enter_ms = 0U;
         CanTp_Channels[i].tx_last_cf_ms    = 0U;
         CanTp_Channels[i].rx_state_enter_ms = 0U;
@@ -262,7 +264,13 @@ Std_ReturnType CanTp_Transmit(PduIdType TxPduId, const PduInfoType *PduInfoPtr)
         LOG_D("CanTp", "TX SF: Pdu=%u, len=%u", (unsigned int)TxPduId,
               (unsigned int)totalLen);
 
-        return CanTp_SendNPdu(cfg, pciBuf, 8U);
+        /* 发送成功 (已入硬件队列) → 置 SF 待确认标志, N_As 超时起点 */
+        if (CanTp_SendNPdu(cfg, pciBuf, 8U) == E_OK) {
+            ch->tx_sf_pending    = true;
+            ch->tx_state_enter_ms = Log_GetTimeMs();
+            return E_OK;
+        }
+        return E_NOT_OK;
 
     } else {
         /* ================================================================
@@ -556,6 +564,21 @@ void CanTp_MainFunction(void)
         switch (ch->state) {
 
         /* ================================================================
+         *  IDLE: SF 已发出, 等待 CanIf 确认
+         *  超时 (N_As) → 回 IDLE + 报错 (帧仍在发送或已丢失)
+         * ================================================================ */
+        case CANTP_IDLE:
+            if (ch->tx_sf_pending) {
+                if ((now - ch->tx_state_enter_ms) >= CANTP_AS_TIMEOUT_MS) {
+                    LOG_E("CanTp", "TX N_As timeout: Pdu=%u (no confirm in %u ms)",
+                          (unsigned int)ch->tp_pdu_id,
+                          (unsigned int)CANTP_AS_TIMEOUT_MS);
+                    ch->tx_sf_pending = false;
+                }
+            }
+            break;
+
+        /* ================================================================
          *  WAIT_FC: 等待对端回复 Flow Control
          *  超时 (N_Bs) → 回 IDLE + 报错
          * ================================================================ */
@@ -599,7 +622,9 @@ void CanTp_MainFunction(void)
                       (unsigned int)ch->tp_pdu_id,
                       (unsigned int)ch->tx_total_length);
                 ch->state = CANTP_IDLE;
-                PduR_CanIfTxConfirmation(ch->tp_pdu_id);
+                /* I-PDU 发送完成 → 向上确认 (简化: 不等最后一帧 CF 的硬件确认,
+                 * 由 CAN_Send 返回值兜底; 严格实现见 TODO) */
+                PduR_CanTpTxConfirmation(ch->tp_pdu_id);
                 break;
             }
 
@@ -663,6 +688,30 @@ void CanTp_TxConfirmation(PduIdType TxPduId)
 {
     if (!CanTp_Initialized) return;
 
+    /* 按 CanIf PDU ID 查找通道 (与 RxIndication 一致) */
+    CanTp_ChannelType *ch = NULL;
+    const CanTp_NPduConfigType *cfg = NULL;
+    for (uint8_t i = 0U; i < CANTP_CHANNEL_COUNT; i++) {
+        if (CanTp_NPduConfig[i].canif_pdu_id == (uint16_t)TxPduId) {
+            ch  = &CanTp_Channels[i];
+            cfg = &CanTp_NPduConfig[i];
+            break;
+        }
+    }
+    if (ch == NULL || cfg == NULL) {
+        LOG_W("CanTp", "TxConfirmation: no channel for PduId=%u",
+              (unsigned int)TxPduId);
+        return;
+    }
+
     LOG_D("CanTp", "TX confirm Pdu=%u", (unsigned int)TxPduId);
-    PduR_CanIfTxConfirmation(TxPduId);
+
+    /* SF: 单帧确认 = 整个 I-PDU 发送完成 → 向上确认 */
+    if (ch->tx_sf_pending) {
+        ch->tx_sf_pending = false;
+        PduR_CanTpTxConfirmation(cfg->tp_pdu_id);
+        return;
+    }
+
+    /* MF: 中间 CF 的确认由 MainFunction 乐观推进, 此处忽略 */
 }
