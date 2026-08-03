@@ -700,13 +700,13 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 本文档是 MCAL 层的终点。向上连接：
 
 ```
-Can (本文) ──→ CanIf (3_CanIf_CAN接口层详解.md) ──→ PduR ──→ Com ──→ RTE ──→ SWC
+Can (本文) ──→ CanIf (4_CanIf_CAN接口层详解.md) ──→ PduR ──→ Com ──→ RTE ──→ SWC
    ↑                ↑
  已实现           已实现                          待实现
 ```
 
 调用关系：
 
-- **Can_Write()** ← 当前被 `CanIf_Transmit()` 调用（[3_CanIf_CAN接口层详解.md](./3_CanIf_CAN接口层详解.md) 第 4.2 节）
+- **Can_Write()** ← 当前被 `CanIf_Transmit()` 调用（[4_CanIf_CAN接口层详解.md](./4_CanIf_CAN接口层详解.md) 第 4.2 节）
 - **Can_Read()** ← 由 `Can_MainFunctionRx()` 内部调用，不再由 main 循环直接轮询
 - **Can_Init()** ← 已迁移到 `EcuM_Init()` 中统一调度，配置数据在 `Can_Cfg.c` 中定义（`extern const Can_ConfigType Can_Config`）

@@ -1,6 +1,6 @@
 # Com — AUTOSAR 通信层详解
 
-> 这是 AUTOSAR CAN 通信栈系列的第 6 篇。
+> 这是 AUTOSAR CAN 通信栈系列的第 9 篇。
 > 讲解 COM（Communication）层——信号与 I-PDU 的映射、位级编解码、Update Bit 模式、超时检测。
 > 适合刚学完前 5 篇的嵌入式小白和 AUTOSAR 小白。
 

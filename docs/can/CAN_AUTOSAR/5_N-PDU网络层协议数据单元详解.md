@@ -9,9 +9,9 @@
 | 前置知识 | 文档 |
 |----------|------|
 | AUTOSAR 五层全景（CanTp/CanIf 在整个架构中的位置） | [1_AUTOSAR_CP_CAN通信栈.md](./1_AUTOSAR_CP_CAN通信栈.md) |
-| CanIf 层（PDU ID 概念、PDU→CAN ID 查表） | [3_CanIf_CAN接口层详解.md](./3_CanIf_CAN接口层详解.md) |
+| CanIf 层（PDU ID 概念、PDU→CAN ID 查表） | [4_CanIf_CAN接口层详解.md](./4_CanIf_CAN接口层详解.md) |
 
-> 不需要预先知道 CAN TP 协议——本文 §3 会从零介绍 PCI 和四种帧类型。它们的完整交互逻辑（FC 流控、状态机）在 [第 5 篇](./5_CanTp_CAN传输层详解.md) 展开。
+> 不需要预先知道 CAN TP 协议——本文 §3 会从零介绍 PCI 和四种帧类型。它们的完整交互逻辑（FC 流控、状态机）在 [第 5 篇](./6_CanTp_CAN传输层详解.md) 展开。
 
 ---
 
@@ -66,7 +66,7 @@ Com ──→ PduR ──→ CanTp ──→ CanIf ──→ Can (MCAL) ──�
 **传送的 `PduInfoType` 结构体是同一个**，区别只在于：
 - 当它从 Com 传来时，我们叫它 I-PDU（交互层视角）
 - 当它从 CanTp 传给 CanIf 时，我们叫它 N-PDU（网络层视角）
-- 当 CanIf 把它转成 `Can_PduType` 交给 Can 驱动时，那个叫 L-PDU
+- 当 CanIf 把它转成 `Can_PduType` 交给 Can 驱动时，那个叫 L-PDU（详见 [L-PDU 详解](./3_L-PDU数据链路层协议数据单元详解.md)）
 
 ### 2.2 类型定义：全栈唯一
 

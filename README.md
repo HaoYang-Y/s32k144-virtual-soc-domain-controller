@@ -61,9 +61,11 @@
 | 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 分层回调 (RX/TX) + hth 配置表 |
 | 8 | **CanTp 传输层** | Services/CanTp | `mcu/Services/CanTp/src/CanTp.c` | ✅ SF/FF/MF + FC 流控 + TX 确认链 + N_As |
 | 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ 直通路由 + 确认路由 (路由表待 Com) |
-| 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 调度 (RX/TX/TP) |
-| 11 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
-| 12 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
+| 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 全栈调度 |
+| 11 | **Com 通信层** | Services/Com | `mcu/Services/Com/src/Com.c` | ✅ 信号编解码 + Update Bit + Deadline + DET |
+| 12 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ Com↔CanTp 双向路由 + 直传路径 |
+| 13 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ✅ Rte_Write/Read → Com_SendSignal/ReceiveSignal |
+| 14 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
 
 ### P3 — SWC 信号采集 + 全链路（依赖 P2）
 

@@ -25,10 +25,13 @@
 | 序号 | 文档 | 内容 |
 |------|------|------|
 | 2 | [MCAL Can 驱动详解](./2_MCAL_Can驱动详解.md) | 最底层——硬件怎么收发帧 |
-| 3 | [CanIf CAN 接口层详解](./3_CanIf_CAN接口层详解.md) | PDU ID 抽象——上层不再关心 CAN ID |
-| 4 | [N-PDU 详解](./4_N-PDU网络层协议数据单元详解.md) | 核心概念——I-PDU/N-PDU/L-PDU 的区别 |
-| 5 | [CanTp CAN 传输层详解](./5_CanTp_CAN传输层详解.md) | 传输协议——大块数据的分段、重组、流控 |
-| 6 | [Com 通信层详解](./6_Com_通信层详解.md) | 顶层——信号打包、Update Bit、超时检测 |
+| 3 | [L-PDU 详解](./3_L-PDU数据链路层协议数据单元详解.md) | CAN 硬件帧——`Can_PduType` 定长 8 字节 |
+| 4 | [CanIf CAN 接口层详解](./4_CanIf_CAN接口层详解.md) | PDU ID 抽象——上层不再关心 CAN ID |
+| 5 | [N-PDU 详解](./5_N-PDU网络层协议数据单元详解.md) | I-PDU/N-PDU 的区别、PCI 编解码 |
+| 6 | [CanTp CAN 传输层详解](./6_CanTp_CAN传输层详解.md) | 传输协议——大块数据的分段、重组、流控 |
+| 7 | [PduR 路由层详解](./7_PduR_PDU路由层详解.md) | PDU 路由器——Com↔CanTp 转发桥梁 |
+| 8 | [I-PDU 详解](./8_I-PDU交互层协议数据单元详解.md) | 信号容器——三种 PDU 中最"高级"的一种 |
+| 9 | [Com 通信层详解](./9_Com_通信层详解.md) | 顶层——信号打包、Update Bit、超时检测 |
 
 ---
 
@@ -216,7 +219,7 @@ void           CanIf_TxConfirmation(PduIdType TxPduId);
 CanIf_PduIdType CanIf_FindPduIdByCanId(uint32_t CanId);
 ```
 
-**当前状态**：已实现（详见 [3_CanIf_CAN接口层详解](./3_CanIf_CAN接口层详解.md)）。
+**当前状态**：已实现（详见 [4_CanIf_CAN接口层详解](./4_CanIf_CAN接口层详解.md)）。
 
 已实现功能：
 - `CanIf_Transmit` — PDU 查表 → 格式转换 → `Can_Write`（完整实现）
@@ -266,15 +269,15 @@ typedef enum {
 ```
 
 **当前状态**：已激活，由 EcuM 编译和初始化。PCI 编解码 + SF/FF/CF/FC 状态机完整实现（TX 发 FF 后等待 FC 流控，RX 收 FF 后自动回 FC）。另实现：
-- **TX 确认链**：SF 发送完成经 CanIf→PduR 回到 `CanTp_TxConfirmation`，支持 N_As 超时（详见 [5_CanTp_CAN传输层详解](./5_CanTp_CAN传输层详解.md)）
+- **TX 确认链**：SF 发送完成经 CanIf→PduR 回到 `CanTp_TxConfirmation`，支持 N_As 超时（详见 [6_CanTp_CAN传输层详解](./6_CanTp_CAN传输层详解.md)）
 - 超时保护：N_As（SF 确认）/ N_Bs（等 FC）/ N_Cr（等 CF）
 
 ---
 
-### 2.4 PduR — PDU Router（已激活）
+### 2.4 PduR — PDU Router（已实现 ✅）
 
-**职责**：在通信协议栈中**路由 I-PDU**。典型的 AUTOSAR 系统中，PduR 负责在
-Com、CanTp、SpiIf（CAN 之外的通信总线接口）等模块之间转发 PDU。
+**职责**：在通信协议栈中**路由 I-PDU**。Com 和 CanTp/CanIf 之间的所有 PDU
+都经过 PduR 转发。PduR 不处理数据内容——只做"接线板"式的调用链转发。
 
 **文件位置**：`mcu/Services/PduR/include/PduR.h`
 
@@ -300,7 +303,7 @@ void           PduR_CanIfTxConfirmation(PduIdType TxPduId);   // N-PDU 发送确
 void           PduR_CanTpTxConfirmation(PduIdType TxPduId);   // I-PDU 发送确认
 ```
 
-**当前状态**：已激活，由 EcuM 编译和初始化。当前为直通模式（确认/接收统一转发给 CanTp，无路由表）。`PduR_CanIfTxConfirmation` → CanTp（N-PDU 级）；`PduR_CanTpTxConfirmation` → 预留 Com（I-PDU 级）。Com 实现后引入路由表。
+**当前状态**：已实现 ✅。Com↔CanTp 路由全部打通。RX 路径（CanIf→CanTp→PduR→Com）和 TX 路径（Com→PduR→CanTp→CanIf）完整工作，CAN 收发实测通过。详见 [7_PduR_PDU路由层详解](./7_PduR_PDU路由层详解.md)。
 
 ---
 
@@ -426,7 +429,7 @@ Com_MainFunction 每秒检查：RX 信号距上次收到新数据是否超过 `t
 
 非法参数（如 Com_SendSignal(999)、传 NULL 指针）会触发 `Det_ReportError()`，输出到 UART 日志。这在开发期帮你快速定位 bug。
 
-**当前状态**：完整实现 ✅。模块由 EcuM 编译和初始化，Com_MainFunction 周期调度。CAN 收发实测通过（candump + cansend 验证）。详见 [6_Com_通信层详解](./6_Com_通信层详解.md)。
+**当前状态**：完整实现 ✅。模块由 EcuM 编译和初始化，Com_MainFunction 周期调度。CAN 收发实测通过（candump + cansend 验证）。详见 [9_Com_通信层详解](./9_Com_通信层详解.md)。
 
 ---
 

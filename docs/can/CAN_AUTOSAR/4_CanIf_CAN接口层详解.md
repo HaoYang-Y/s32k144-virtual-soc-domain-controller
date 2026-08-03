@@ -70,7 +70,7 @@ typedef struct {
 
 与 MCAL `Can_PduType` 的对比：
 
-> **N-PDU 是什么？** 简而言之：`PduInfoType` 在 CanTp ↔ CanIf 之间传输时扮演的角色就叫 N-PDU。它不是什么新类型——就是同一个 `PduInfoType`。完整的解释（包括 I-PDU/N-PDU/L-PDU 的关系）见 [第 4 篇](./4_N-PDU网络层协议数据单元详解.md)。
+> **N-PDU 是什么？** 简而言之：`PduInfoType` 在 CanTp ↔ CanIf 之间传输时扮演的角色就叫 N-PDU。它不是什么新类型——就是同一个 `PduInfoType`。完整的解释（包括 I-PDU/N-PDU/L-PDU 的关系）见 [第 5 篇](./5_N-PDU网络层协议数据单元详解.md)。
 
 | | Can_PduType (MCAL — L-PDU) | PduInfoType (CanIf — N-PDU 角色) |
 |--|---------------------------|----------------------------------|
@@ -553,5 +553,5 @@ MCAL Can (2_MCAL_Can驱动详解.md) ──→ CanIf (本文) ──→ PduR ─
 
 - **向下**：`CanIf_Transmit()` → `Can_Write(Hth, &canPdu)`（MCAL，AUTOSAR 标准签名）
 - **向上**：`CanIf_RxIndication()` → `PduR_CanIfRxIndication()`（PduR 已激活，路由逻辑 WIP）
-- **横向**：CanTp ↔ CanIf 之间通过 `PduInfoType`（N-PDU 角色）传输 CAN TP 帧，详见 [4_N-PDU网络层协议数据单元详解](./4_N-PDU网络层协议数据单元详解.md)
+- **横向**：CanTp ↔ CanIf 之间通过 `PduInfoType`（N-PDU 角色）传输 CAN TP 帧，详见 [5_N-PDU网络层协议数据单元详解](./5_N-PDU网络层协议数据单元详解.md)
 - **配置源**：`signals.yaml` → `generate_canif_cfg.py` → `CanIf_Cfg.c` + `CanIf_PduId.h`
