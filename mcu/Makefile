@@ -25,6 +25,7 @@ INCLUDES  += -I./MCAL/Spi/include
 INCLUDES  += -I./EcuAbstraction/CanIf/include
 INCLUDES  += -I./EcuAbstraction/SpiIf/include
 INCLUDES  += -I./Services/Com/include
+INCLUDES  += -I./Services/Det/include
 INCLUDES  += -I./Services/PduR/include
 INCLUDES  += -I./Services/CanTp/include
 INCLUDES  += -I./Services/EcuM/include
@@ -92,8 +93,11 @@ LDFLAGS += -Wl,-Map=$(BUILD_DIR)/output.map
 LDFLAGS += -Wl,--gc-sections
 LDFLAGS += --entry=Reset_Handler
 LDFLAGS += -nostartfiles -nodefaultlibs -nostdlib
-LDFLAGS += -lgcc -lm -lc -lnosys
 LDFLAGS += --specs=nano.specs --specs=nosys.specs
+
+# 库必须放在 $(OBJS) 之后: GNU ld 从左到右解析符号，先扫到的库只拉入
+# 那个时刻已出现的未定义符号。库在前则 obj 的引用不被解析。
+LDLIBS := -lgcc -lm -lc -lnosys
 
 # ---------- 用户源文件 ----------
 SRCS_USER  := App/Swc_SignalGateway/src/main.c
@@ -129,11 +133,13 @@ SRCS_USER  += Services/EcuM/src/EcuM.c
 SRCS_USER  += Services/PduR/src/PduR.c
 SRCS_USER  += Services/CanTp/src/CanTp.c
 SRCS_USER  += Services/CanTp/config/CanTp_Cfg.c
-#SRCS_USER  += Services/Com/src/Com.c
+SRCS_USER  += Services/Com/src/Com.c
+SRCS_USER  += Services/Com/config/Com_Cfg.c
+SRCS_USER  += Services/Det/src/Det.c
 #SRCS_USER  += Services/BswM/src/BswM.c
 
-# RTE 骨架源文件 (待实现)
-#SRCS_USER  += RTE/Rte.c
+# RTE 骨架源文件
+SRCS_USER  += RTE/Rte.c
 
 # App 层源文件
 SRCS_USER  += App/Swc_SignalGateway/src/Swc_SignalGateway.c
@@ -201,7 +207,7 @@ $(OBJDIR)/%.o: %.S
 	$(AS) $(ASFLAGS) -c -o $@ $<
 
 $(TARGET): $(OBJS) | $(BUILD_DIR)
-	$(CC) $(LDFLAGS) -o $@ $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 	$(SIZE) $@
 
 $(HEX): $(TARGET)

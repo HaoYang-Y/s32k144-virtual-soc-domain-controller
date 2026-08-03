@@ -15,10 +15,8 @@
 #include "CanIf.h"
 #include "CanTp.h"
 #include "PduR.h"
-/* TODO: 各层模块实现后依次加入
 #include "Com.h"
 #include "Rte.h"
-*/
 
 static EcuM_StateType EcuM_State = ECUM_STATE_STARTUP;
 
@@ -47,17 +45,20 @@ void EcuM_Init(void)
     /* --- Services 层 --- */
     PduR_Init();
     CanTp_Init();
-    /* TODO: Com_Init(); */
+    Com_Init();
 
     /* --- RTE 层 --- */
-    /* TODO: Rte_Init(); */
+    Rte_Init();
 
     EcuM_State = ECUM_STATE_RUN;
 }
 
 void EcuM_MainFunction(void)
 {
-    /* 驱动 CAN Transport Layer 流控状态机 (FF → FC → CF) */
+    /* COM: 周期发送 I-PDU (信号→打包→PduR→CanTp→CanIf→Can) */
+    Com_MainFunction();
+
+    /* CanTp: 驱动 CAN Transport Layer 流控状态机 (FF → FC → CF) */
     CanTp_MainFunction();
 
     /* RX: ISR 标记 → 消费 CAN 帧 → CanIf → PduR → CanTp 重组 */
@@ -65,6 +66,9 @@ void EcuM_MainFunction(void)
 
     /* TX: ISR 标记 → 消费 TX 完成 → 回调 CanIf → PduR → CanTp 确认 */
     Can_MainFunctionWrite();
+
+    /* RTE: SWC 周期任务 (信号采集、业务逻辑、信号发送) */
+    Rte_MainFunction();
 }
 
 void EcuM_SelectShutdownTarget(void)

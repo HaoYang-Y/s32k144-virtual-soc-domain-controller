@@ -28,6 +28,7 @@
 | 3 | [CanIf CAN 接口层详解](./3_CanIf_CAN接口层详解.md) | PDU ID 抽象——上层不再关心 CAN ID |
 | 4 | [N-PDU 详解](./4_N-PDU网络层协议数据单元详解.md) | 核心概念——I-PDU/N-PDU/L-PDU 的区别 |
 | 5 | [CanTp CAN 传输层详解](./5_CanTp_CAN传输层详解.md) | 传输协议——大块数据的分段、重组、流控 |
+| 6 | [Com 通信层详解](./6_Com_通信层详解.md) | 顶层——信号打包、Update Bit、超时检测 |
 
 ---
 
@@ -303,39 +304,129 @@ void           PduR_CanTpTxConfirmation(PduIdType TxPduId);   // I-PDU 发送确
 
 ---
 
-### 2.5 Com — Communication Service（骨架）
+### 2.5 Com — Communication Service（已实现 ✅）
 
-**职责**：AUTOSAR 通信栈的最顶层。负责信号的打包/解包、发送模式控制
-（DIRECT/NONE/PERIODIC/MIXED）、信号门控等。
+**职责**：AUTOSAR 通信栈的最顶层。负责信号的打包/解包、发送模式控制、Update Bit 管理、信号超时检测（Deadline Monitoring）以及 DET 错误报告。
 
-**文件位置**：`mcu/Services/Com/include/Com.h`
+**文件位置**：
+- `mcu/Services/Com/include/Com.h` — API 声明 + 类型定义
+- `mcu/Services/Com/src/Com.c` — 完整实现（~950 行）
+- `mcu/Services/Com/config/Com_Cfg.h` — 信号与 I-PDU 配置表
+- `mcu/Services/Com/config/Com_Cfg.c` — 配置实例
 
-**核心概念**：
+**核心概念——你需要先理解的三个东西**：
 
 ```
-    SWC (main.c)
-    Com_SendSignal(SignalId, &value)
-           │
-           ▼
-    Com 模块内部
-    ├── 将 Signal 值按位布局写入 I-PDU 缓冲区 (packing)
-    └── 根据传输模式触发 I-PDU 发送
-           │
-           ▼
-    PduR_ComTransmit(I-PduId, &PduInfo)
+                 信号 (Signal)                     I-PDU
+              ┌──────────────────┐           ┌──────────────┐
+              │ TestTxCounter    │──┐        │              │
+              │ (32-bit, byte0-3)│  │   ┌───→│  CAN ID 0x123│
+              └──────────────────┘  │   │    │  (TX, 500ms) │
+                                    ├───┤    │              │
+              ┌──────────────────┐  │   │    └──────────────┘
+              │ TestTxMagic0     │──┤   │
+              │ (8-bit, byte4)   │  │   │
+              └──────────────────┘  │   │    一个 I-PDU = 一条 CAN 帧
+                                    │   │    多个信号共享一个 I-PDU
+              ┌──────────────────┐  │   │    就像多个包裹装进一个集装箱
+              │ TestTxMagic1     │──┘   │
+              │ (8-bit, byte5)   │      │    ┌──────────────┐
+              └──────────────────┘      └───→│  CAN ID 0x100│
+                                             │  (RX, 事件)   │
+              ┌──────────────────┐      ┌───→│              │
+              │ TestRxData       │──────┘    └──────────────┘
+              │ (64-bit, byte0-7)│
+              └──────────────────┘
 ```
+
+1. **信号 (Signal)**：SWC 操作的最小数据单元。比如"车速"是一个 16-bit 整数，"踏板位置"是一个 8-bit 整数。
+2. **I-PDU (Interaction Layer PDU)**：一组信号的集合，映射到一条 CAN 帧。多个信号**共享**同一个 CAN 帧的数据区。
+3. **Shadow Buffer**：信号的"影子副本"。Com_SendSignal 不直接发 CAN 帧，而是先把信号值写入 Shadow Buffer + 打包到 I-PDU 字节数组。真正的发送由 Com_MainFunction 调度。
 
 **核心 API**：
 
 ```c
-// Com.h
+// Com.h — 完整实现
 void Com_Init(void);
 void Com_MainFunction(void);
+
+// 信号收发
 void Com_SendSignal(Com_SignalIdType SignalId, const void *SignalData);
 void Com_ReceiveSignal(Com_SignalIdType SignalId, void *SignalData);
+
+// ★ Update Bit 模式: SWC 轮询更新标志位，不直接比较值
+uint8_t Com_GetUpdateBit(Com_SignalIdType SignalId);
+
+// ★ Deadline Monitoring: 检查信号是否超时
+Com_SignalStatusType Com_GetSignalStatus(Com_SignalIdType SignalId);
+
+// IPduGroup 通信模式控制
+void Com_IPduGroupStart(Com_IPduIdType GroupId);
+void Com_IPduGroupStop(Com_IPduIdType GroupId);
+
+// 回调接口 (被 PduR 调用)
+void Com_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr);
+void Com_TxConfirmation(PduIdType TxPduId);
 ```
 
-**当前状态**：骨架（SKELETON），仅有类型定义和函数声明。
+**关键机理解释**：
+
+**1. Transfer Property（发送触发模式）——信号更新后"什么时候发"？**
+
+| 模式 | 行为 | 类比 |
+|------|------|------|
+| TRIGGERED | 信号值改变 → **立即**调用 PduR_ComTransmit | 急件——写了马上发 |
+| PENDING | 信号值改变 → 标记 dirty → **等** Com_MainFunction 统一发 | 普通——攒一批一起发 |
+| NONE | 信号改变不触发发送，仅按周期时间发 | 定时报告——到点才发 |
+
+一个 I-PDU 里可以混用三种模式。比如我们 TX 的三个信号：
+- TestTxCounter → TRIGGERED（计数器变了马上发）
+- TestTxMagic0 → PENDING（标记一下，等 MainFunction 统一发）
+- TestTxMagic1 → NONE（只管写，不管发，等 500ms 周期）
+
+**2. COM 层不直接发送！Shadow Buffer 模式**
+
+```
+SWC 调用 Com_SendSignal(COUNTER, &value)
+  │
+  ├─→ 写入 Shadow Buffer (记录信号值，供 Com_ReceiveSignal 读取)
+  ├─→ 调用 Com_PackSignal() 把 value 按 bit_position/bit_size 打包到 I-PDU 字节数组
+  └─→ 标记 I-PDU dirty
+
+... 一段时间后 ...
+
+Com_MainFunction() 被 EcuM 周期调用
+  ├─→ 检查哪些 I-PDU dirty
+  ├─→ 检查周期时间是否到 (cycle_time_ms)
+  └─→ 调用 PduR_ComTransmit() → 真正发出 CAN 帧
+```
+
+为什么不直接发？两个原因：
+- **批处理**：多个 SWC 写同一 I-PDU 的不同信号，只发一次 CAN 帧
+- **时序解耦**：SWC 写信号的时机 ≠ CAN 总线发送的时机
+
+**3. Update Bit（更新标志位）——AUTOSAR 最经典的模式**
+
+```
+SWC 处理逻辑:
+  if (Com_GetUpdateBit(TEST_RX_DATA)) {   // 有新数据吗？
+      读信号值 → 处理                       // Update Bit 自动清 0
+  }
+```
+
+为什么不用"比较新旧值"？
+- 值可能先变 1→2→1，比较发现"没变"，但你漏掉了中间的变化
+- Update Bit 是"发生过更新事件"的标志，不依赖值本身
+
+**4. Deadline Monitoring（信号超时检测）**
+
+Com_MainFunction 每秒检查：RX 信号距上次收到新数据是否超过 `timeout_ms`？超过就标记 COM_SIGNAL_TIMEOUT。这是 AUTOSAR 安全监控的基础——"数据不能太老"。
+
+**5. DET 错误报告**
+
+非法参数（如 Com_SendSignal(999)、传 NULL 指针）会触发 `Det_ReportError()`，输出到 UART 日志。这在开发期帮你快速定位 bug。
+
+**当前状态**：完整实现 ✅。模块由 EcuM 编译和初始化，Com_MainFunction 周期调度。CAN 收发实测通过（candump + cansend 验证）。详见 [6_Com_通信层详解](./6_Com_通信层详解.md)。
 
 ---
 
@@ -432,11 +523,12 @@ SWC/App
 ### 4.1 状态总览
 
 ```
-    RTE:    [SKELETON] 仅有类型定义，SWC↔BSW 信号映射待实现
-    Com:    [SKELETON] 仅有类型和函数声明，无实现
-    PduR:   [已激活]    由 EcuM 编译和初始化，路由表已配置
-    CanTp:  [已激活]    PCI 编解码 + SF/FF/CF/FC 状态机，详见 4_N-PDU网络层协议数据单元详解
-    EcuM:   [已实现]    按 AUTOSAR 顺序调度 BSW 模块初始化
+    RTE:    [已实现]    SWC↔Com 信号映射，Rte_Write→Com_SendSignal / Rte_Read→Com_ReceiveSignal
+    Com:    [完整实现 ✅] 信号打包/解包 + Update Bit + Deadline Monitoring + DET + IPduGroup
+    Det:    [已实现]    开发错误追踪，Det_ReportError → UART 日志
+    PduR:   [已实现]    Com↔CanTp 路由，RX/TX 回调链完整打通
+    CanTp:  [已实现]    SF/FF/CF/FC 状态机 + 超时保护
+    EcuM:   [已实现]    按 AUTOSAR 顺序调度 BSW 模块初始化和 MainFunction
     CanIf:  [已实现]    PDU 抽象(AUTOSAR PduInfoType) + DET + YAML 自动配置
     Can:    [已实现]    AUTOSAR 标准 MCAL 驱动(AUTOSAR Can_Write 签名)，详见 2
 ```
@@ -468,46 +560,116 @@ for (;;) {
 
 ### 4.3 向完整 AUTOSAR 栈迁移的路线图
 
-1. ✅ **CanIf → Can 桥接**：已完成。`CanIf_Transmit(PduId, PduInfoType*)` → `Can_Write(Hth, Can_PduType*)`，AUTOSAR 标准签名
+1. ✅ **CanIf → Can 桥接**：`CanIf_Transmit(PduId, PduInfoType*)` → `Can_Write(Hth, Can_PduType*)`
 
-2. ✅ **ComStack_Types.h**：已完成。全栈统一 `PduInfoType`（`SduId`/`SduLength`/`SduDataPtr`）
+2. ✅ **ComStack_Types.h**：全栈统一 `PduInfoType`
 
-3. ✅ **CanTp N-PDU 处理**：已完成。PCI 编解码 + SF/FF/CF/FC 状态机（TX 简化 FC、RX 含 FC 回复）
+3. ✅ **CanTp N-PDU 处理**：PCI 编解码 + SF/FF/CF/FC 状态机
 
-4. ✅ **PduR + CanTp 编译集成**：已完成。EcuM 统一调度 `Can→CanIf→PduR→CanTp` 初始化
+4. ✅ **PduR + CanTp 集成**：EcuM 统一调度初始化 + RX/TX 回调链
 
-5. ⬜ **RTE 信号映射**：实现 `Rte_SignalToPduMapping` / `Rte_PduToSignalMapping`，SWC 通过 RTE API 收发信号
+5. ✅ **RTE 信号映射**：`Rte_Write→Com_SendSignal`, `Rte_Read→Com_ReceiveSignal`
 
-6. ⬜ **PduR 路由逻辑**：路由表已有配置，实现 `PduR_ComTransmit()` → `CanTp_Transmit()` 查找-转发逻辑
+6. ✅ **PduR 路由逻辑**：`PduR_ComTransmit→CanTp`, `PduR_CanTpRxIndication→Com_RxIndication`
 
-7. ⬜ **Com 信号打包**：实现信号到 PDU 的位布局，`Com_SendSignal()` / `Com_ReceiveSignal()`
+7. ✅ **Com 信号打包**：Intel/Motorola 字节序 bit 级编解码 + Transfer Property
 
-8. ✅ **中断模式**：RX 已迁移到中断驱动（`Can_EnableInterrupts` + `Can_MainFunctionRx`）
+8. ✅ **中断模式**：RX 中断驱动（`Can_EnableInterrupts` + `Can_MainFunctionRx`）
 
-9. ⬜ **CanTp FC 流控完善**：TX 侧完整的 FC 等待 + BS/STmin 速率控制
+9. ✅ **Com Update Bit**：每信号更新标志位 + `Com_GetUpdateBit` API
+
+10. ✅ **Com Deadline Monitoring**：信号超时检测 + `Com_GetSignalStatus` API
+
+11. ✅ **DET 错误报告**：`Det_ReportError(ModuleId, InstanceId, ApiId, ErrorId)`
+
+12. ✅ **Link 顺序修复**：`$(OBJS)` 置于 `-lc` 之前，`memcpy`/`memset` 正常链接
+
+13. ⬜ **CanTp FC 流控完善**：TX 侧完整的 FC 等待 + BS/STmin 速率控制
 
 ---
 
 ## 5. 关键设计要点
 
-### 5.1 模块 ID 与错误检测
+### 5.1 初学者最容易困惑的三个概念
+
+**Q1: "信号" 和 "I-PDU" 到底什么关系？**
+
+把 I-PDU 想象成一个**集装箱**，信号就是里面的**包裹**。一个集装箱里放多个包裹，共享一次运输（一条 CAN 帧）。每个包裹在集装箱里有自己的位置（bit_position）和大小（bit_size）。
+
+**Q2: Com_SendSignal 为什么不立刻发？**
+
+因为还有别的信号也在同一个 I-PDU 里。如果每个信号写的时候都立刻发，那一个 I-PDU 里 3 个信号就要发 3 条 CAN 帧——浪费。COM 层的策略是"**先写好，到时间（或凑齐一批）再发**"。
+
+**Q3: AUTOSAR 里没有 `malloc` 和线程？**
+
+对。AUTOSAR CP 里的所有东西——配置表、缓冲区、状态机——都是**编译时就确定**的。没有动态分配，没有抢占式线程。所有"并发"都是 `MainFunction` 周期调用 + 状态机驱动。
+
+### 5.2 Update Bit 模式——SWC 怎么知道"有新数据到了"？
+
+这是 AUTOSAR 最经典、最常用的数据新鲜度检查模式：
+
+```c
+// SWC 主循环
+void Swc_MainFunction(void) {
+    // 不比较信号值！用标志位！
+    if (Com_GetUpdateBit(VEHICLE_SPEED)) {
+        uint16_t speed;
+        Com_ReceiveSignal(VEHICLE_SPEED, &speed);
+        // 处理 speed...
+        // Update Bit 已在 GetUpdateBit 中自动清 0
+    }
+    // 没新数据，直接跳过，继续下一轮
+}
+```
+
+**为什么要这样？** 因为信号值可能"闪变"（1→0→1），比较新旧值会漏掉。Update Bit 记录的是"**发生过更新事件**"，不关心值本身。
+
+### 5.3 Deadline Monitoring——数据不能太老
+
+对于安全关键信号（如刹车位置），"3 秒没收到数据"比"数据值是 0"更可怕——前者意味着通信断了。
+
+```c
+// Com_MainFunction 中检测:
+for each RX signal:
+    if (current_time - last_update_time > timeout_ms):
+        mark as COM_SIGNAL_TIMEOUT
+    else:
+        mark as COM_SIGNAL_OK
+```
+
+SWC 在读信号前先检查状态：
+```c
+if (Com_GetSignalStatus(BRAKE_POS) == COM_SIGNAL_TIMEOUT) {
+    // 刹车信号超时！进入安全状态
+}
+```
+
+### 5.4 DET 错误报告——开发期的"安全带"
+
+AUTOSAR 每个 BSW 模块都配有 DET（Development Error Tracer）。当 API 被非法调用时，DET 记录错误但不中止程序。这相当于给你的代码上了个"**参数校验安全带**"：
+
+```c
+void Com_SendSignal(SignalId, data) {
+    if (SignalId >= COM_SIGNAL_COUNT) {
+        Det_ReportError(COM_MODULE_ID, 0, API_ID_SEND, COM_E_PARAM);
+        return;  // 记录错误，安全返回，不崩
+    }
+    // ... 正常路径
+}
+```
+
+### 5.5 模块 ID 与错误检测
 
 项目中遵循 AUTOSAR DET（Development Error Tracer）规范，每层分配唯一的模块 ID：
 
-| 模块 | Module ID (AUTOSAR 规范) | 文件 |
-|------|-------------------------|------|
-| CanIf | 0x32 (50) | `CanIf.c` |
+| 模块 | Module ID | 文件 |
+|------|-----------|------|
+| Com | 22 (0x16) | `Com.c` |
+| PduR | 21 (0x15) | `PduR.h` |
+| CanTp | 28 (0x1C) | `CanTp.h` |
+| CanIf | 50 (0x32) | `CanIf.c` |
 
-各模块的 API ID 用于精确定位错误来源：
-
-```c
-#define CANIF_INIT_ID          0x00U
-#define CANIF_TRANSMIT_ID      0x01U
-#define CANIF_RX_INDICATION_ID 0x02U
-#define CANIF_TX_CONFIRM_ID    0x03U
-```
-
-### 5.2 每次 Can_Write 前必须重配 TX MB
+### 5.6 每次 Can_Write 前必须重配 TX MB
 
 这是该项目最重要的一个工程技巧：
 
@@ -609,5 +771,10 @@ PAL 认为 MB 仍被占用，返回 `STATUS_BUSY`。
 | `mcu/Services/CanTp/include/CanTp.h` | CanTp API + PCI 编解码 |
 | `mcu/Services/CanTp/src/CanTp.c` | N-PDU 处理核心：SF/FF/CF/FC 状态机 |
 | `mcu/Services/PduR/include/PduR.h` | PduR I-PDU 路由（使用 `PduInfoType*`） |
-| `mcu/Services/Com/include/Com.h` | Com 类型定义（I-PDU） |
-| `mcu/App/Swc_SignalGateway/src/main.c` | 应用层 CAN 测试程序 |
+| `mcu/Services/Com/include/Com.h` | Com API 声明 + 类型定义 |
+| `mcu/Services/Com/src/Com.c` | Com 完整实现（信号编解码 + Update Bit + Timeout + DET） |
+| `mcu/Services/Com/config/Com_Cfg.h` | Com 配置表（信号位布局 + I-PDU 周期 + 超时） |
+| `mcu/Services/Com/config/Com_Cfg.c` | Com 配置实例 |
+| `mcu/Services/Det/include/Det.h` | DET 错误追踪头文件 |
+| `mcu/Services/Det/src/Det.c` | DET 实现（错误→UART 日志） |
+| `mcu/App/Swc_SignalGateway/src/main.c` | 应用层 CAN 测试程序（走完整 AUTOSAR 链路） |

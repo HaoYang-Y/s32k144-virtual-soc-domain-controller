@@ -1,11 +1,13 @@
 # Domain Controller 任务计划
 
 > 基于实际项目结构，按 AUTOSAR CP/AP 分层组织。
-> 当前日期: 2026-07-20
+> 当前日期: 2026-08-01
 >
 > **CAN 栈全链路调通** ✅ — MCAL Can → CanIf → CanTp 三层验证。
 > 中断驱动 RX (Can_EnableInterrupts + Can_MainFunctionRx)，分层回调架构。
-> 多路 CAN 架构 (HTH 编码 Controller+MB)，CanTp SF/FF/MF 完整流控。
+> 多路 CAN 架构 (HTH 编码 Controller+MB，hth 进 CanIf 配置表)，CanTp SF/FF/MF 完整流控。
+> **TX 确认链打通** ✅ — Can 发送完成 → CanIf_TxConfirmation → PduR → CanTp (SF 确认 + N_As 超时)。
+> 硬件验证: CANable 抓 SF/FF、cansend 发 FF → MCU 回 FC (4/4)、TX 确认 LED 验证。
 > CANable (gs_usb, 1d50:606f) 500kbps 稳定抓取。
 
 ---
@@ -16,17 +18,18 @@
 |----|------|------|------|
 | **MCAL** | Gpio | `mcu/MCAL/Gpio/` | ✅ AUTOSAR 对齐 (Read/Write/FlipChannel, Std_ReturnType) |
 | **MCAL** | Mcu | `mcu/MCAL/Mcu/` | ✅ AUTOSAR 对齐 (Mcu_Init, GetResetReason, PerformReset) |
-| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 多路架构 + 中断驱动 RX + HTH 编码 |
+| **MCAL** | Can | `mcu/MCAL/Can/` | ✅ 多路架构 + 中断驱动 RX/TX + HTH 编码 + TX 回调 |
 | **MCAL** | Spi | `mcu/MCAL/Spi/` | ⏳ 骨架已有 |
-| **MCAL** | Port | `mcu/MCAL/Port/` | ⏳ 骨架已有 |
-| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ✅ 分层回调 + PDU 翻译 + 中断 RX |
+| **MCAL** | Port | `mcu/MCAL/Port/` | ✅ Port_Init 已用 (引脚复用批量配置) |
+| **ECU Abstraction** | CanIf | `mcu/EcuAbstraction/CanIf/` | ✅ 分层回调 (RX/TX) + PDU 翻译 + hth 配置表 |
 | **ECU Abstraction** | IoHwAb | `mcu/EcuAbstraction/IoHwAb/` | ⏳ 骨架已有 |
 | **ECU Abstraction** | SpiIf | `mcu/EcuAbstraction/SpiIf/` | ⏳ 骨架已有 |
-| **Services** | EcuM | `mcu/Services/EcuM/` | ✅ 统一 Init + MainFunction 调度 |
-| **Services** | CanTp | `mcu/Services/CanTp/` | ✅ FC 流控状态机 (SF/FF/MF 已验证) |
-| **Services** | PduR | `mcu/Services/PduR/` | ✅ 最小路由实现 |
+| **Services** | EcuM | `mcu/Services/EcuM/` | ✅ 统一 Init + MainFunction 调度 (RX/TX/TP) |
+| **Services** | CanTp | `mcu/Services/CanTp/` | ✅ FC 流控状态机 + TX 确认链 + N_As 超时 (已测) |
+| **Services** | PduR | `mcu/Services/PduR/` | ✅ 直通路由 (RX/确认 → CanTp)，路由表待 Com |
 | **Services** | Com | `mcu/Services/Com/` | ⏳ 骨架 |
-| **CDD** | Uart | `mcu/CDD/Uart/` | ⏳ 骨架，**未调通** 🔥 |
+| **Services** | BswM | `mcu/Services/BswM/` | ⏳ 骨架 |
+| **CDD** | Uart | `mcu/CDD/Uart/` | ✅ 实现 (Log 在用)，**硬件 USB-UART 未验证** 🔥 |
 | **RTE** | Rte | `mcu/RTE/` | ⏳ 骨架 |
 | **SWC** | Swc_SignalGateway | `mcu/App/Swc_SignalGateway/` | ⏳ 骨架 |
 | — | — | — | — |
@@ -60,6 +63,8 @@
 - [x] CanIf 封装 (骨架已有，上层通过 CanIf_Transmit 调用 Can_Write)
 - [x] USB-CAN 分析仪 candump 验证 — CANable (gs_usb, 1d50:606f)
 - [x] 烧录到 S32K144 验证
+- [x] TX 确认链验证 (Can_MainFunctionWrite → CanIf_TxConfirmation → PduR → CanTp, 2026-08-01)
+- [x] RX 链路验证 (cansend 发 FF → MCU 回 FC 4/4, 2026-08-01)
 
 **Bug 修复记录**: 参见 [BugfixLog.md](BugfixLog.md)
 
@@ -80,11 +85,11 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 - `mcu/CDD/Uart/config/Uart_Cfg.h` — 波特率/引脚配置
 
 **子任务**:
-- [ ] 确认 LPUART 时钟使能
-- [ ] 配置引脚复用 (Port 模块)
-- [ ] 实现 Uart_Init (115200, 8N1)
-- [ ] 实现 Uart_SendString (阻塞发送)
-- [ ] 宿主机串口工具验证输出
+- [x] 确认 LPUART 时钟使能
+- [x] 配置引脚复用 (Port 模块)
+- [x] 实现 Uart_Init (115200, 8N1)
+- [x] 实现 Uart_SendString (阻塞发送)
+- [ ] 宿主机串口工具验证输出 (需 USB-UART 接线)
 - [ ] 烧录到 S32K144 验证
 
 ---
@@ -118,9 +123,10 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ### 任务 6: CanIf 接口
 **涉及**: `mcu/EcuAbstraction/CanIf/`
-- [x] CanIf_Transmit → Can_Write (HTH 编码, PDU→CAN ID 查表)
+- [x] CanIf_Transmit → Can_Write (HTH 编码, PDU→CAN ID 查表, hth 来自配置表)
 - [x] CanIf_RxIndication 回调机制 → CanIf_McalRxCallback + PDU ID 翻译
 - [x] CanIf_Init 向 MCAL 注册 RX 回调 (Can_RegisterRxCallback)
+- [x] CanIf 向 MCAL 注册 TX 回调 (Can_RegisterTxCallback) + HTH 反查 PduId (2026-08-01)
 
 ### 任务 7: SpiIf 接口
 **涉及**: `mcu/EcuAbstraction/SpiIf/`
@@ -196,4 +202,4 @@ S32K144 FlexCAN0 ──── CAN 帧 ──── USB-CAN 分析仪 ───�
 
 ---
 
-> 最后更新: 2026-07-17
+> 最后更新: 2026-08-01

@@ -8,6 +8,7 @@
 
 #include "Log.h"
 #include <stdarg.h>
+#include <string.h>
 
 /* ===================================================================
  *  ARM DWT 周期计数器基址 (Cortex-M4)
@@ -51,12 +52,6 @@ static size_t log_strlen(const char *s)
 static void log_strcpy(char *dst, const char *src)
 {
     while (*src) *dst++ = *src++;
-}
-
-static void log_memset(void *p, int c, size_t n)
-{
-    unsigned char *d = (unsigned char *)p;
-    for (size_t i = 0U; i < n; i++) d[i] = (unsigned char)c;
 }
 
 /* ===================================================================
@@ -242,7 +237,7 @@ static void ringbuf_reset(void)
 {
     ring_wr  = 0U;
     ring_cnt = 0U;
-    log_memset(ringbuf, 0, sizeof(ringbuf));
+    (void)memset(ringbuf, 0, sizeof(ringbuf));
 }
 
 uint32_t Log_DumpRingBuf(char *buf, uint32_t size)

@@ -40,10 +40,10 @@
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 1 | **CAN 收发调通** | MCAL/Can, EcuAbstraction/CanIf | `mcu/MCAL/Can/src/Can.c`, `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 已通 |
+| 1 | **CAN 收发调通** | MCAL/Can, EcuAbstraction/CanIf | `mcu/MCAL/Can/src/Can.c`, `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 已通 (含 TX 确认链) |
 | 2 | **UART 日志输出** | CDD/Uart | `mcu/CDD/Uart/src/Uart.c` | ❌ 未通 |
 
-> CAN 是域控制器的核心通信手段，UART 是调试的基础。这两个是当前最高优先级。
+> CAN 是域控制器的核心通信手段，UART 是调试的基础。CAN 已全链路调通（TX 发送 + RX 接收含 FC 回复 + TX 确认链）；UART 代码已实现（Log 在用），但硬件 USB-UART 链路未验证。
 
 ### P1 — MCAL 外设驱动（部分已验证）
 
@@ -58,10 +58,10 @@
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 分层回调 + 中断 RX |
-| 8 | **CanTp 传输层** | Services/CanTp | `mcu/Services/CanTp/src/CanTp.c` | ✅ SF/FF/MF 分段 + FC 流控 |
-| 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ CanTp→Com 最小路由 |
-| 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 统一调度 |
+| 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 分层回调 (RX/TX) + hth 配置表 |
+| 8 | **CanTp 传输层** | Services/CanTp | `mcu/Services/CanTp/src/CanTp.c` | ✅ SF/FF/MF + FC 流控 + TX 确认链 + N_As |
+| 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ 直通路由 + 确认路由 (路由表待 Com) |
+| 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 调度 (RX/TX/TP) |
 | 11 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
 | 12 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ⏳ 骨架已有 |
 
@@ -149,7 +149,7 @@ PC (宿主机)
   │ CDD/Uart/                        │       └──────────────────────────────────┘
   ├──────────────────────────────────┤
   │ MCAL/ (NXP SDK API)              │
-│   Gpio / Mcu / Can / Spi / Port  │
+  │   Gpio / Mcu / Can / Spi / Port  │
   └──────────────────────────────────┘
 ```
 
@@ -313,10 +313,10 @@ lsusb -d 1d50:606f
 
 **2. MCU 端 — 上电运行**
 
-烧录后 MCU 以 500kbps 收发 CAN 消息（中断驱动 RX）：
+烧录后 MCU 以 500kbps 收发 CAN 消息（中断驱动 RX/TX）：
 - TX CAN ID: `0x123`（CanTp SF/MF 交替），RX CAN ID: `0x100`
-- 架构: 多路 CAN (HTH 编码 Controller+MB), 分层回调 (CanIf_McalRxCallback)
-- LED: 绿闪=心跳, 橙=TX, 红=错误, 蓝=RX
+- 架构: 多路 CAN (HTH 编码 Controller+MB, hth 进 CanIf 配置表), 分层回调 (CanIf_McalRxCallback / CanIf_McalTxCallback), TX 确认链 (Can → CanIf → PduR → CanTp)
+- LED: 绿闪=心跳, 橙=TX, 红=错误（蓝灯无功能，仅诊断时临时使用）
 
 **3. 预期输出**
 
@@ -330,9 +330,14 @@ candump can0:
 **4. 双向通信测试 (MCU ↔ Ubuntu)**
 
 ```bash
-# Ubuntu → MCU: 发送帧到 MCU 的 RX mailbox (CAN ID 0x100)
-cansend can0 100#AABBCCDDEEFF0011
-# MCU 蓝灯(PTD16)翻转表示接收成功
+# Ubuntu → MCU: 发送 FF 多帧首帧 (CAN ID 0x100, 声明总长 20 字节)
+cansend can0 100#1014010203040506
+# MCU 收到 FF 后自动回 FC 流控帧 (ISO 15765-2) — candump 应看到:
+#   can0 100 [8] 10 14 01 02 03 04 05 06   ← 我们发的 FF
+#   can0 100 [8] 30 08 01 AA AA AA AA AA   ← MCU 回的 FC (CTS, BS=8, STmin=1)
+# 继续发 CF 完成重组:
+cansend can0 100#210708090A0B0C0D
+cansend can0 100#220E0F1011121314
 ```
 
 ### 编译 SOC 端
@@ -363,6 +368,8 @@ cmake .. && make -j$(nproc)
 | 4 | [从零学CAN](docs/从零学CAN.md) | 没接触过 CAN | CAN 协议原理 + FlexCAN SDK 开发 |
 | 5 | [S32K144_DRV_层开发指南](docs/S32K144_DRV_层开发指南.md) | 需要查 SDK API | DRV 层外设开发流程和 API 速查 |
 | 6 | [MCU_交叉编译与烧录指南](docs/MCU_交叉编译与烧录指南.md) | 需要烧录/调试 | 工具链搭建 + J-Link 烧录流程 |
+| 7 | [AUTOSAR CAN 栈系列](docs/can/CAN_AUTOSAR/1_AUTOSAR_CP_CAN通信栈.md) | 正在学 CAN 栈 | 5 篇从零讲解：通信栈全景 → Can 驱动 → CanIf → N-PDU → CanTp |
+| 8 | [EcuM 零基础入门](docs/EcuM/EcuM_零基础入门.md) | 想理解启动流程 | EcuM 初始化调度 + MainFunction 周期驱动 |
 
 ---
 

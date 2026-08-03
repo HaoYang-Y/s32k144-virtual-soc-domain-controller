@@ -10,6 +10,7 @@
 
 #include "PduR.h"
 #include "CanTp.h"
+#include "Com.h"
 #include "Log.h"
 
 void PduR_Init(void)
@@ -56,7 +57,8 @@ void PduR_CanTpRxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
 {
     LOG_D("PduR", "CanTpRxIndication: PduId=%u, len=%u (I-PDU ready for Com)",
           (unsigned int)RxPduId, (unsigned int)PduInfoPtr->SduLength);
-    /* TODO: Com_RxIndication(routedComPduId, PduInfoPtr); */
+    /* 路由到 COM 层: 解包 I-PDU → 更新信号 Shadow Buffer */
+    Com_RxIndication(RxPduId, PduInfoPtr);
 }
 
 /**
@@ -82,5 +84,6 @@ void PduR_CanTpTxConfirmation(PduIdType TxPduId)
 {
     LOG_D("PduR", "CanTpTxConfirmation: PduId=%u (I-PDU sent)",
           (unsigned int)TxPduId);
-    /* TODO: Com_TxConfirmation(routedComPduId); */
+    /* 路由到 COM 层: 通知 I-PDU 发送完成 */
+    Com_TxConfirmation(TxPduId);
 }
