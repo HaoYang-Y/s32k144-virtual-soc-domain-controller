@@ -181,10 +181,10 @@ void EcuM_Init(void)
     /* --- Services 层 --- */
     PduR_Init();                // PDU 路由（转发 CanIf ↔ CanTp ↔ Com）
     CanTp_Init();               // CAN 传输层（ISO 15765-2 分段/重组）
-    /* TODO: Com_Init(); */     // 通信服务（信号 ↔ PDU 编解码）
+    Com_Init();                 // 通信服务（信号 ↔ PDU 编解码）
 
     /* --- RTE 层 --- */
-    /* TODO: Rte_Init(); */     // 运行时环境（SWC 与 BSW 的胶水层）
+    Rte_Init();                 // 运行时环境（SWC 与 BSW 的胶水层）
 
     EcuM_State = ECUM_STATE_RUN;
 }
@@ -211,16 +211,18 @@ main() 启动
          │
          ├─ PduR_Init()         ← Services 层
          ├─ CanTp_Init()
-         ├─ (TODO) Com_Init()
+         ├─ Com_Init()          ← 通信服务（信号编解码）
          │
-         └─ (TODO) Rte_Init()   ← RTE 层
+         └─ Rte_Init()          ← RTE 层（SWC↔BSW 桥梁）
          → 进入 ECUM_STATE_RUN
 
 main() while(1):
   └─ EcuM_MainFunction()
-       ├─ CanTp_MainFunction()   ← 驱动 CAN TP 流控状态机
-       ├─ Can_MainFunctionRx()   ← 消费 CAN RX 中断数据
-       └─ Can_MainFunctionWrite()← 消费 CAN TX 完成确认
+       ├─ Com_MainFunction()      ← COM: 周期发送 I-PDU + Deadline 监控
+       ├─ CanTp_MainFunction()    ← 驱动 CAN TP 流控状态机
+       ├─ Can_MainFunctionRx()    ← 消费 CAN RX 中断数据
+       ├─ Can_MainFunctionWrite() ← 消费 CAN TX 完成确认
+       └─ Rte_MainFunction()      ← RTE: SWC 周期任务
 ```
 
 > **Can_MainFunctionWrite 是干嘛的？** CAN 发送是"请求→确认"两步式：`Can_Write` 把帧交给硬件后，硬件发完会中断置标志，这个函数轮询标志并回调上层（CanIf → PduR → CanTp）。**不加这一行，发送确认链就断了**——SF 的 N_As 超时永远等不到确认，上层永远不知道帧有没有发出去。
@@ -245,9 +247,11 @@ main() while(1):
 
 ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1kHz），负责驱动所有 BSW 模块的周期处理：
 
+- **Com_MainFunction()**：COM 信号打包→I-PDU→周期发送（500ms）+ Deadline 超时监控
 - **CanTp_MainFunction()**：驱动 CAN TP 流控状态机（N_As / WAIT_FC 超时 / SENDING_CF 按 STmin/BS 节奏发 CF / RECEIVING 超时）
 - **Can_MainFunctionRx()**：消费 CAN RX 中断数据（ISR 标记 → 读 frame → CanIf → PduR → CanTp 重组）
-- **Can_MainFunctionWrite()**：消费 CAN TX 完成确认（ISR 标记 → 回调 CanIf → PduR → CanTp）
+- **Can_MainFunctionWrite()**：消费 CAN TX 完成确认（ISR 标记 → 回调 CanIf → PduR → CanTp → Com）
+- **Rte_MainFunction()**：SWC 周期任务调度
 - （后续）监控休眠/关机请求，协调 BswM 模式切换
 
 ### 4.3 关机管理 (Shutdown)
@@ -344,9 +348,10 @@ ECU 正常运行期间，EcuM 的 `EcuM_MainFunction()` 被周期性调用（~1k
 | `EcuM_Init()` — BSW 初始化调度 | ✅ | [EcuM.c](../../mcu/Services/EcuM/src/EcuM.c) |
 | `CLOCK_DRV_Init` / `Port_Init` 集成 | ✅ | EcuM_Init() 内前两步 |
 | `Can_Init` + `CanIf_Init` 集成 | ✅ | EcuM_Init() MCAL + Abstraction 层 |
-| `PduR_Init` + `CanTp_Init` 集成 | ✅ | EcuM_Init() Services 层 |
+| `PduR_Init` + `CanTp_Init` + `Com_Init` 集成 | ✅ | EcuM_Init() Services 层 |
+| `Rte_Init` 集成 | ✅ | EcuM_Init() RTE 层初始化 |
 | `Can_EnableInterrupts` 集成 | ✅ | EcuM_Init() MCAL 层末尾 |
-| `EcuM_MainFunction()` | ✅ | CanTp 状态机 + CAN RX 消费 + CAN TX 确认 |
+| `EcuM_MainFunction()` — 全栈调度 | ✅ | Com → CanTp → CanRx → CanTx → RTE |
 | `EcuM_SetState()` | ✅ | 状态切换 API |
 | `EcuM_SelectShutdownTarget()` | 🟡 骨架 | 函数已定义，逻辑待实现 |
 

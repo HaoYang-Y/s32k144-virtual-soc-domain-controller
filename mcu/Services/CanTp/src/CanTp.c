@@ -483,7 +483,10 @@ void CanTp_RxIndication(PduIdType RxPduId, const PduInfoType *PduInfoPtr)
             uint8_t  fc_bs          = data[1];                     /* Block Size */
             uint8_t  fc_stmin_raw   = data[2];                     /* STmin (100us 单位) */
 
-            /* 查找等待 FC 的 TX 通道 */
+            /* FC 路由: 找到正在等待 FC 的 TX 通道
+             * 正确做法是按 TP PDU ID 匹配——FC 来自哪个 RX 通道的远端发送方，
+             * 就路由到对应的 TX 通道。简化: 线性扫 WAIT_FC 状态通道。
+             * 多通道同时 WAIT_FC 时可能误路由——完整实现需存 TX→RX 配对。 */
             CanTp_ChannelType *tx_ch = NULL;
             for (uint8_t k = 0U; k < CANTP_CHANNEL_COUNT; k++) {
                 if (CanTp_Channels[k].state == CANTP_WAIT_FC) {
@@ -574,13 +577,15 @@ void CanTp_MainFunction(void)
                           (unsigned int)ch->tp_pdu_id,
                           (unsigned int)CANTP_AS_TIMEOUT_MS);
                     ch->tx_sf_pending = false;
+                    /* SF 发送失败 → 通知上层 (AUTOSAR: I-PDU 级确认失败) */
+                    PduR_CanTpTxConfirmation(ch->tp_pdu_id);
                 }
             }
             break;
 
         /* ================================================================
          *  WAIT_FC: 等待对端回复 Flow Control
-         *  超时 (N_Bs) → 回 IDLE + 报错
+         *  超时 (N_Bs) → 回 IDLE + 报错 + 通知上层发送失败
          * ================================================================ */
         case CANTP_WAIT_FC:
             if ((now - ch->tx_state_enter_ms) >= CANTP_BS_TIMEOUT_MS) {
@@ -589,6 +594,8 @@ void CanTp_MainFunction(void)
                       (unsigned int)CANTP_BS_TIMEOUT_MS);
                 ch->state            = CANTP_IDLE;
                 ch->tx_total_length  = 0U;
+                /* MF 发送失败 (没收到 FC) → 通知上层 */
+                PduR_CanTpTxConfirmation(ch->tp_pdu_id);
             }
             break;
 
@@ -658,6 +665,8 @@ void CanTp_MainFunction(void)
                 } else {
                     LOG_E("CanTp", "TX CF send failed: Pdu=%u", (unsigned int)ch->tp_pdu_id);
                     ch->state = CANTP_IDLE;
+                    /* CF 发送失败 → 通知上层 (整个 I-PDU 发送失败) */
+                    PduR_CanTpTxConfirmation(ch->tp_pdu_id);
                 }
             }
             break;

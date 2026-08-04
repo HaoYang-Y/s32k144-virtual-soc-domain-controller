@@ -10,6 +10,7 @@
 
 #include "PduR.h"
 #include "CanTp.h"
+#include "CanIf.h"
 #include "Com.h"
 #include "Log.h"
 
@@ -19,17 +20,23 @@ void PduR_Init(void)
 }
 
 /**
- * @brief Com → PduR → CanTp/CanIf 发送路径
+ * @brief Com → PduR → CanIf (直传) 或 CanTp (多帧) 发送路径
  *
- * @note  当前所有 I-PDU 统一走 CanTp:
- *        - ≤7 bytes: CanTp 以 SF 发送 (一次 CanIf_Transmit)
- *        - >7 bytes: CanTp 以 FF+CF 分段发送 (FC 流控由 MainFunction 驱动)
- *        后续引入路由表后可区分 TP PDU 和 Direct PDU。
+ * @note  AUTOSAR 标准支持两条 TX 路径:
+ *        - I-PDU ≤ 8 bytes: 直传 CanIf → 不经过 CanTp，无 PCI 开销
+ *        - I-PDU > 8 bytes: 走 CanTp → FF+CF 分段 (ISO 15765-2)
  */
 Std_ReturnType PduR_ComTransmit(PduIdType PduId, const PduInfoType *PduInfoPtr)
 {
     LOG_D("PduR", "ComTransmit: PduId=%u, len=%u",
           (unsigned int)PduId, (unsigned int)PduInfoPtr->SduLength);
+
+    /* I-PDU ≤ 8 bytes → 直传 CanIf，跳过 CanTp，不加 PCI */
+    if (PduInfoPtr->SduLength <= 8U) {
+        return CanIf_Transmit(PduId, PduInfoPtr);
+    }
+
+    /* I-PDU > 8 bytes → 必须走 CanTp 多帧分段 */
     return CanTp_Transmit(PduId, PduInfoPtr);
 }
 

@@ -835,7 +835,8 @@ uint8_t Com_SendSignalGroup(Com_SignalIdType GroupId)
         Com_IPduBufferType       *ipdu = &Com_IPduBuffers[i];
         const Com_IPduConfigType *cfg  = Com_FindIPduConfig((Com_IPduIdType)i);
 
-        if (cfg != NULL && ipdu->dirty && ipdu->enabled) {
+        if (cfg != NULL && cfg->group_id == (Com_IPduIdType)GroupId
+            && ipdu->dirty && ipdu->enabled) {
             Com_TriggerIPduSend(ipdu, cfg);
             sent_count++;
         }

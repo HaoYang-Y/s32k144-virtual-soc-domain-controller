@@ -145,11 +145,28 @@ Std_ReturnType Can_SetControllerMode(Can_ControllerType     Controller,
     Can_CtrlState *c = &Can_Ctrl[Controller];
     if (!c->initialized)                    return E_NOT_OK;
 
-    if (Transition == CAN_CS_STARTED) {
+    /* AUTOSAR 状态机校验: 仅允许合法跳转 */
+    switch (Transition) {
+    case CAN_CS_STARTED:
+        if (c->state != CAN_CS_STOPPED) {
+            return E_NOT_OK;  /* STARTED 只能从 STOPPED 跳入 */
+        }
         c->state = CAN_CS_STARTED;
-    } else if (Transition == CAN_CS_STOPPED) {
+        break;
+
+    case CAN_CS_STOPPED:
+        if (c->state != CAN_CS_STARTED) {
+            return E_NOT_OK;  /* STOPPED 只能从 STARTED 跳入 */
+        }
+        /* 停止控制器: 中止所有挂起传输 + 暂停 RX MB */
+        for (uint8_t i = 0U; i < c->txCount; i++) {
+            (void)CAN_AbortTransfer(&c->instance, i);
+        }
         c->state = CAN_CS_STOPPED;
-    } else {
+        break;
+
+    default:
+        /* CAN_CS_SLEEP / CAN_CS_UNINIT 等模式本学习项目不支持 */
         return E_NOT_OK;
     }
     return E_OK;
@@ -216,6 +233,11 @@ status_t Can_Read(uint8_t Controller, uint8_t Hrh,
 
 /* ===================================================================
  *  Can_GetControllerErrorState / Can_GetControllerMode
+ *
+ *  注: GetControllerErrorState 返回软件缓存的错误状态。
+ *  生产级实现应读取 FlexCAN ESR1 寄存器的 FLTCONF 字段:
+ *    00 = Error Active, 01 = Error Passive, 1x = Bus Off
+ *  (AUTOSAR SWS_Can_00167 要求从硬件读取实时状态)
  * =================================================================== */
 
 Std_ReturnType Can_GetControllerErrorState(Can_ControllerType  Controller,

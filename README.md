@@ -54,40 +54,39 @@
 | 5 | **SPI 驱动** | MCAL/Spi | `mcu/MCAL/Spi/src/Spi.c` | ⏳ 骨架已有 |
 | 6 | **IoHwAb 硬件抽象** | EcuAbstraction/IoHwAb | `mcu/EcuAbstraction/IoHwAb/src/IoHwAb.c` | ⏳ 骨架已有 |
 
-### P2 — ECU 抽象层 + Services + RTE（骨架已有，部分已验证）
+### P2 — ECU 抽象层 + Services + RTE（CAN 栈全通 ✅）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
 | 7 | **CanIf 接口封装** | EcuAbstraction/CanIf | `mcu/EcuAbstraction/CanIf/src/CanIf.c` | ✅ 分层回调 (RX/TX) + hth 配置表 |
 | 8 | **CanTp 传输层** | Services/CanTp | `mcu/Services/CanTp/src/CanTp.c` | ✅ SF/FF/MF + FC 流控 + TX 确认链 + N_As |
-| 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ 直通路由 + 确认路由 (路由表待 Com) |
+| 9 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ Com↔CanTp 双向路由 + TX 确认路由 |
 | 10 | **EcuM 状态管理** | Services/EcuM | `mcu/Services/EcuM/src/EcuM.c` | ✅ Init + MainFunction 全栈调度 |
 | 11 | **Com 通信层** | Services/Com | `mcu/Services/Com/src/Com.c` | ✅ 信号编解码 + Update Bit + Deadline + DET |
-| 12 | **PduR 路由层** | Services/PduR | `mcu/Services/PduR/src/PduR.c` | ✅ Com↔CanTp 双向路由 + 直传路径 |
-| 13 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ✅ Rte_Write/Read → Com_SendSignal/ReceiveSignal |
-| 14 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
+| 12 | **RTE 运行时环境** | RTE | `mcu/RTE/Rte.c` | ✅ Rte_Write/Read → Com_SendSignal/ReceiveSignal |
+| 13 | **SpiIf 接口封装** | EcuAbstraction/SpiIf | `mcu/EcuAbstraction/SpiIf/src/SpiIf.c` | ⏳ 骨架已有 |
 
-### P3 — SWC 信号采集 + 全链路（依赖 P2）
+### P3 — SWC 信号采集 + 全链路（全栈贯通 ✅）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 13 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/Swc_SignalGateway.c` | ⏳ 骨架已有 |
-| 14 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
+| 14 | **SWC 信号采集调度** | App/Swc_SignalGateway | `mcu/App/Swc_SignalGateway/src/main.c` | ✅ App→RTE→Com→PduR→CanTp→Can 全链路 |
+| 15 | **MCU↔SOC SPI 通信** | MCAL/Spi + soc/platform/Spi + soc/communication/SpiGateway | 双方 SPI 模块 | ❌ 未实现 |
 
 ### P4 — SOC 端服务（依赖 P3）
 
 | # | 任务 | 涉及模块 | 关键文件 | 状态 |
 |---|------|---------|---------|------|
-| 15 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
-| 16 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
-| 17 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
+| 16 | **SOC 信号融合** | soc/apps/DomainController | `soc/apps/DomainController/src/SignalFusion.cpp` | ⏳ 骨架已有 |
+| 17 | **SOME/IP 服务发布** | soc/communication/ara/com | `soc/communication/ara/com/src/ServiceDiscovery.cpp` | ❌ 未实现 |
+| 18 | **UDS 诊断服务** | soc/diag/ara/diag | `soc/diag/ara/diag/src/UdsServer.cpp` | ❌ 未实现 |
 
 ### P5 — 远期规划
 
 | # | 任务 | 涉及模块 | 状态 |
 |---|------|---------|------|
-| 18 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
-| 19 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
+| 19 | **Protobuf 代码生成集成** | `proto/signal_gateway.proto` → MCU(nanopb) + SOC(protoc) | ❌ 未实现 |
+| 20 | **DBC 信号矩阵** | CAN 信号编解码标准化 | ❌ 未实现 |
 
 ---
 
@@ -164,19 +163,16 @@ PC (宿主机)
 ### 推荐学习顺序
 
 ```
-第一阶段：MCAL 外设驱动（Gpio→Mcu→Can→Spi→Port）
-         ↓        附 AUTOSAR CP MCAL 概念（标准化接口 Xxx_Init / Xxx_Read / Xxx_Write）
-第二阶段：ECU 抽象层（CanIf→IoHwAb→SpiIf）
-         ↓        把 MCAL 的硬件操作抽象为业务层可用的接口
-第三阶段：RTE + SWC 应用层（Rte.h + Swc_SignalGateway）
-         ↓        零开销宏连接 SWC 和底层驱动
-第四阶段：CAN 通信栈（FlexCAN 收发 + CanTp 传输 + DBC 编解码）
-         ↓        附 CP Can/CanIf/CanTp/PduR/Com 概念
-第五阶段：SPI 通信（32B 固定帧 + 差分协议 + CRC8）
+✅ 第一阶段：MCAL 外设驱动（Gpio→Mcu→Can→Port）           — 已完成
+✅ 第二阶段：ECU 抽象层（CanIf）                              — 已完成
+✅ 第三阶段：CAN 通信栈（CanTp→PduR→Com→RTE）                 — 已完成
+✅ 第四阶段：SWC 应用层（App→RTE→Com→PduR→CanTp→CanIf→Can）  — 已完成
+         ↓        全链路 CAN 收发实测通过 (candump + cansend)
+⬜ 第五阶段：SPI 通信（Spi→SpiIf, MCU↔SOC 双板通信）
          ↓        附 CP Spi/Com Stack 概念
-第六阶段：SOME/IP 服务通信（vsomeip + SD + Event）
+⬜ 第六阶段：SOME/IP 服务通信（vsomeip + SD + Event）
          ↓        附 AP ara::com/ara::sd 概念
-第七阶段：UDS 诊断（ISO 14229）
+⬜ 第七阶段：UDS 诊断（ISO 14229）
 ```
 
 ---
