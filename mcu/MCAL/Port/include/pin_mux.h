@@ -36,8 +36,18 @@
 #define UART0_TX_PORT  PTA
 #define UART0_TX_PIN   2U
 
+/* LPSPI1 Slave 引脚定义 (ALT3) — Arduino SPI 排母 */
+#define LPSPI1_SCK_PORT   PTB
+#define LPSPI1_SCK_PIN    14U
+#define LPSPI1_SIN_PORT   PTB
+#define LPSPI1_SIN_PIN    16U
+#define LPSPI1_SOUT_PORT  PTB
+#define LPSPI1_SOUT_PIN   15U
+#define LPSPI1_PCS3_PORT  PTB
+#define LPSPI1_PCS3_PIN   17U
+
 /* 已配置引脚总数 */
-#define NUM_OF_CONFIGURED_PINS0  8U
+#define NUM_OF_CONFIGURED_PINS0  12U
 
 /* 引脚配置数组（在 pin_mux.c 中定义） */
 extern pin_settings_config_t g_pin_mux_InitConfigArr0[NUM_OF_CONFIGURED_PINS0];

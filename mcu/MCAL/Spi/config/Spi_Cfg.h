@@ -22,9 +22,7 @@
 /** @brief 序列数 */
 #define SPI_SEQUENCE_COUNT          1U
 
-/** @brief SPI 通道 ID 枚举 */
-typedef uint8_t Spi_ChannelType;
-typedef uint8_t Spi_JobType;
-typedef uint8_t Spi_SequenceType;
+/** @brief SPI 通道/作业/序列 ID 类型 */
+/* Spi_ChannelType / Spi_JobType / Spi_SequenceType 定义在 Spi.h */
 
 #endif /* SPI_CFG_H */

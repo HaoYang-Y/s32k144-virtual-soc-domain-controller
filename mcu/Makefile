@@ -61,6 +61,7 @@ INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/clock/S32K1xx
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/flexcan
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/edma
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/lpuart
+INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/lpspi
 INCLUDES  += -I$(SDK_DIR)/platform/drivers/src/interrupt
 INCLUDES  += -I$(SDK_DIR)/platform/pal/inc
 INCLUDES  += -I$(SDK_DIR)/platform/pal/src/can
@@ -122,8 +123,8 @@ SRCS_USER  += Services/Log/src/Log.c
 SRCS_USER  += EcuAbstraction/CanIf/src/CanIf.c
 SRCS_USER  += EcuAbstraction/CanIf/config/CanIf_Cfg.c
 
-# MCAL 骨架源文件 (待实现)
-#SRCS_USER  += MCAL/Spi/src/Spi.c
+# MCAL 层源文件
+SRCS_USER  += MCAL/Spi/src/Spi.c
 
 # ECU Abstraction 层骨架源文件 (待实现)
 #SRCS_USER  += EcuAbstraction/SpiIf/src/SpiIf.c
@@ -155,6 +156,10 @@ SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/interrupt/interrupt_manager.c
 SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpuart/lpuart_driver.c
 SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpuart/lpuart_hw_access.c
 SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpuart/lpuart_irq.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpspi/lpspi_slave_driver.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpspi/lpspi_shared_function.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpspi/lpspi_hw_access.c
+SRCS_SDK_DRV  += $(SDK_DIR)/platform/drivers/src/lpspi/lpspi_irq.c
 
 
 # SDK EDMA 驱动源文件 (卖家链接了完整 EDMA, 不用 stub)

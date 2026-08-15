@@ -17,6 +17,7 @@
 #include "PduR.h"
 #include "Com.h"
 #include "Rte.h"
+#include "Spi.h"
 
 static EcuM_StateType EcuM_State = ECUM_STATE_STARTUP;
 
@@ -30,6 +31,9 @@ void EcuM_Init(void)
     /* --- 硬件前置: 时钟 + 引脚复用 (必须在所有 MCAL 模块之前) --- */
     CLOCK_DRV_Init(&clockMan1_InitConfig0);
     Port_Init();
+
+    /* --- LPSPI0 Slave 初始化 (SPI 链路打通) --- */
+    (void)Spi_SlaveInit(3U);  /* LPSPI1 PCS3 = PTB17 (CH347T CS0 → SPI1CSN3) */
 
     /* --- MCAL 层 --- */
     if (Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) != E_OK) {

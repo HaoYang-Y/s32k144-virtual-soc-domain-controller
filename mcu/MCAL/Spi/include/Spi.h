@@ -17,8 +17,10 @@
  *  类型定义
  * =================================================================== */
 
-/** @brief SPI 通道 ID */
+/** @brief SPI 通道/作业/序列 ID */
 typedef uint8_t Spi_ChannelType;
+typedef uint8_t Spi_JobType;
+typedef uint8_t Spi_SequenceType;
 
 /** @brief SPI 通道结果状态 */
 typedef enum {
@@ -79,5 +81,33 @@ Spi_JobResultType Spi_AsyncTransmit(Spi_SequenceType SeqId);
 void         Spi_WriteIB(Spi_ChannelType Channel, const uint8 *Data);
 void         Spi_ReadIB(Spi_ChannelType Channel, uint8 *Data);
 void         Spi_Exchange(Spi_ChannelType Channel, const uint8 *TxData, uint8 *RxData, uint16 Length);
+
+/* ===================================================================
+ *  Slave 模式 API (链路打通测试)
+ * =================================================================== */
+
+/**
+ * @brief   初始化 LPSPI0 为 Slave 模式
+ * @param   pcs_index  PCS 引脚索引 (0-3, 对应 PCS0-PCS3)
+ * @return  STATUS_SUCCESS / STATUS_ERROR
+ */
+uint32_t Spi_SlaveInit(uint8_t pcs_index);
+
+/**
+ * @brief   Slave 阻塞收发 — 等待 Master 发起传输，同时收发数据
+ * @param   tx_data     发送缓冲区 (MCU→SOC, 可为 NULL)
+ * @param   rx_data     接收缓冲区 (SOC→MCU, 可为 NULL)
+ * @param   byte_count  传输字节数
+ * @param   timeout_ms  超时 (ms)
+ * @return  STATUS_SUCCESS / STATUS_TIMEOUT / STATUS_ERROR
+ */
+uint32_t Spi_SlaveExchange(const uint8_t *tx_data, uint8_t *rx_data,
+                           uint16_t byte_count, uint32_t timeout_ms);
+
+/**
+ * @brief   获取 Slave 是否已完成至少一次传输 (用于链路测试状态查询)
+ * @return  true: 已收到过数据, false: 未收到
+ */
+bool Spi_SlaveHasReceived(void);
 
 #endif /* MCAL_SPI_H */
