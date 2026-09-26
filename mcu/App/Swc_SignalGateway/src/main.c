@@ -35,7 +35,7 @@
 #include "Com.h"             /* Com_SendSignal, Com_ReceiveSignal */
 #include "EcuM.h"            /* EcuM_Init, EcuM_MainFunction */
 #include "Rte.h"             /* Rte_Write_VehicleSignal, Rte_Read_VehicleSignal */
-#include "Spi.h"             /* Spi_SlaveExchange */
+#include "Spi.h"             /* Spi_WriteIB / Spi_SyncTransmit / Spi_ReadIB */
 #include "pin_mux.h"         /* LED 引脚定义 */
 #include "pins_driver.h"
 #include <stdint.h>
@@ -58,27 +58,33 @@ int main(void)
     PINS_DRV_SetPins(PTD, (1u << 0) | (1u << 1) | (1u << 15) | (1u << 16));
 
     /* ================================================================
-     *  SPI 诊断 v2 (不用直接读寄存器, 避免 HardFault)
+     *  SPI 诊断 (AUTOSAR 标准 API: WriteIB → SyncTransmit → ReadIB)
      *
-     *  蓝灯闪 N 次 → Spi_SlaveInit 返回码 (1=成功, 2=失败)
+     *  蓝灯闪 1 次 → Spi_Init 成功 (EcuM 内执行, Spi_GetStatus()!=SPI_UNINIT)
+     *  蓝灯闪 2 次 → Spi_Init 失败
      *  绿灯闪 3 次 → 正在等待 SOC
-     *  绿灯常亮    → SPI OK
-     *  橙灯常亮    → SPI 超时
+     *  绿灯常亮    → SPI OK (序列结果 SPI_SEQ_OK)
+     *  橙灯常亮    → SPI 失败/超时 (序列结果 SPI_SEQ_FAILED)
      * ================================================================ */
     {
-        uint8_t  spi_rx[64];
-        uint32_t init_ret, result;
-        uint8_t  blink_count;
+        uint8_t spi_tx[64];
+        uint8_t spi_rx[64];
+        uint8_t blink_count;
 
-        /* 诊断: Spi_SlaveInit 返回码 */
-        init_ret   = Spi_SlaveInit(2U);
-        blink_count = (init_ret == 0U) ? 1U : 2U;
+        /* 诊断: Spi_Init 已在 EcuM_Init 内执行 */
+        blink_count = (Spi_GetStatus() != SPI_UNINIT) ? 1U : 2U;
         for (uint8_t i = 0U; i < blink_count; i++) {
             PINS_DRV_ClearPins(PTD, 1u << 16);  /* 蓝亮 */
             for (volatile uint32_t d = 0; d < 2000000U; d++) { __asm__("nop"); }
             PINS_DRV_SetPins(PTD, 1u << 16);    /* 蓝灭 */
             for (volatile uint32_t d = 0; d < 800000U; d++) { __asm__("nop"); }
         }
+
+        /* 预填 TX IB: 0xA0..0xDF 递增模式 (SOC 侧应收到 FF A0 A1 ...) */
+        for (uint8_t i = 0U; i < 64U; i++) {
+            spi_tx[i] = (uint8_t)(0xA0U + i);
+        }
+        (void)Spi_WriteIB(0U, spi_tx);
 
         /* 绿灯快闪 3 次 = 等待 SPI */
         for (int i = 0; i < 3; i++) {
@@ -88,12 +94,16 @@ int main(void)
             for (volatile uint32_t d = 0U; d < 800000U; d++) { __asm__("nop"); }
         }
 
-        result = Spi_SlaveExchange(NULL, spi_rx, 64U, 60000U);
+        /* 阻塞等待 SOC 发起 64 字节交换 (序列超时 60s, 见 Spi_Cfg.c) */
+        (void)Spi_SyncTransmit(0U);
 
-        if (result == 0U) {
+        /* 取回 SOC 发来的数据 (可选: 比对 spidev_test 的 00 01 02 ...) */
+        (void)Spi_ReadIB(0U, spi_rx);
+
+        if (Spi_GetSequenceResult(0U) == SPI_SEQ_OK) {
             PINS_DRV_ClearPins(PTD, 1u << 15);    /* 绿灯常亮 = OK */
         } else {
-            PINS_DRV_ClearPins(PTD, 1u << 0);     /* 橙灯常亮 = 超时 */
+            PINS_DRV_ClearPins(PTD, 1u << 0);     /* 橙灯常亮 = 失败/超时 */
         }
     }
 

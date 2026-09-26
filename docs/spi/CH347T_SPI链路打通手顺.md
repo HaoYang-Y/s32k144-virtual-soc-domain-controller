@@ -154,18 +154,25 @@ Recv (64 bytes): FF A0 A1 A2 A3 A4 A5 A6 A7 A8 A9 AA AB AC AD AE ...
 
 | 阶段 | LED |
 |------|-----|
-| 蓝灯闪 1 次 | Spi_SlaveInit 成功 |
+| 蓝灯闪 1 次 | Spi_Init 成功（EcuM 内执行，`Spi_GetStatus()!=SPI_UNINIT`） |
+| 蓝灯闪 2 次 | Spi_Init 失败 |
 | 绿灯闪 3 次 | 进入 SPI 等待 |
-| 绿灯常亮 | SPI 收发成功 |
-| 橙灯常亮 | SPI 超时 |
+| 绿灯常亮 | SPI 收发成功（序列结果 SPI_SEQ_OK） |
+| 橙灯常亮 | SPI 失败/超时（序列结果 SPI_SEQ_FAILED） |
+
+> 注：SPI 成功后约 1 秒，绿灯会被主循环 CAN 心跳翻转（旧行为一致），
+> 联调时"常亮"仅在心跳启动前有效。
 
 ---
 
 ## 6. MCU 侧实现要点
 
 - **引脚复用**：PTB14/15/16/17 全部 ALT3（`pin_mux.c`）
-- **外设**：LPSPI1 Slave，PCS3（`Spi.c` → `Spi_SlaveInit(3U)`）
-- **驱动模式**：纯轮询（忙等读 RDF/TDF 标志），不依赖 SDK ISR
+- **外设**：LPSPI1 Slave，PCS3（PTB17 ← CH347T CS0），配置见 `Spi_Cfg.c`
+- **驱动模式**：SDK 中断驱动（`LPSPI_DRV_SlaveInit` + `LPSPI_DRV_SlaveTransferBlocking`），
+  ISR 链 `LPSPI1_IRQHandler → LPSPI_DRV_IRQHandler(1U) → SlaveIRQHandler` 喂 FIFO，
+  阻塞同步由内部 OSIF 信号量完成；AUTOSAR 标准调用链：
+  `EcuM_Init → Spi_Init(&Spi_Config) → main.c: Spi_WriteIB → Spi_SyncTransmit → Spi_ReadIB`
 - **时钟**：LPSPI1_CLK = FIRC/2 = 24MHz（`clock_config.c` 已启用）
 - **SDK 依赖**：`lpspi_slave_driver.c` + `lpspi_shared_function.c` +
   `lpspi_hw_access.c` + `lpspi_irq.c`（Makefile 已添加）

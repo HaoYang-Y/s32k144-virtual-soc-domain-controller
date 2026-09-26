@@ -36,13 +36,14 @@
 #define UART0_TX_PORT  PTA
 #define UART0_TX_PIN   2U
 
-/* LPSPI1 Slave 引脚定义 (ALT3) — Arduino SPI 排母 */
+/* LPSPI1 Slave 引脚定义 (ALT3) — Arduino SPI 排母
+ * 注意: PTB15 = LPSPI1_SIN (← CH347T MO), PTB16 = LPSPI1_SOUT (→ CH347T MI) */
 #define LPSPI1_SCK_PORT   PTB
 #define LPSPI1_SCK_PIN    14U
 #define LPSPI1_SIN_PORT   PTB
-#define LPSPI1_SIN_PIN    16U
+#define LPSPI1_SIN_PIN    15U
 #define LPSPI1_SOUT_PORT  PTB
-#define LPSPI1_SOUT_PIN   15U
+#define LPSPI1_SOUT_PIN   16U
 #define LPSPI1_PCS3_PORT  PTB
 #define LPSPI1_PCS3_PIN   17U
 

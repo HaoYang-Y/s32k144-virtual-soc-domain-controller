@@ -18,6 +18,7 @@
 #include "Com.h"
 #include "Rte.h"
 #include "Spi.h"
+#include "Spi_Cfg.h"
 
 static EcuM_StateType EcuM_State = ECUM_STATE_STARTUP;
 
@@ -32,10 +33,8 @@ void EcuM_Init(void)
     CLOCK_DRV_Init(&clockMan1_InitConfig0);
     Port_Init();
 
-    /* --- LPSPI0 Slave 初始化 (SPI 链路打通) --- */
-    (void)Spi_SlaveInit(3U);  /* LPSPI1 PCS3 = PTB17 (CH347T CS0 → SPI1CSN3) */
-
     /* --- MCAL 层 --- */
+    Spi_Init(&Spi_Config);  /* LPSPI1 Slave, PCS3 = PTB17 (CH347T CS0) */
     if (Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) != E_OK) {
         return;
     }
@@ -70,6 +69,9 @@ void EcuM_MainFunction(void)
 
     /* TX: ISR 标记 → 消费 TX 完成 → 回调 CanIf → PduR → CanTp 确认 */
     Can_MainFunctionWrite();
+
+    /* SPI: 异步传输收尾 (完成/错误/超时三态), 无异步传输时立即返回 */
+    Spi_MainFunction_Handling();
 
     /* RTE: SWC 周期任务 (信号采集、业务逻辑、信号发送) */
     Rte_MainFunction();

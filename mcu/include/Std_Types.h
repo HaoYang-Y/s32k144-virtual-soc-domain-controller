@@ -56,4 +56,16 @@ typedef volatile uint32_t   vuint32;
 /** AUTOSAR SWS_StdTypes_00007 — 标准返回值类型 */
 typedef uint8 Std_ReturnType;
 
+/**
+ * AUTOSAR SWS_StdTypes_00015 — 模块版本信息类型
+ * 供各 BSW 模块的 Xxx_GetVersionInfo 接口使用
+ */
+typedef struct {
+    uint16 vendorID;            /* 供应商 ID (AUTOSAR 注册) */
+    uint16 moduleID;            /* 模块 ID (AUTOSAR 标准模块 ID 表) */
+    uint8  sw_major_version;    /* 软件主版本号 */
+    uint8  sw_minor_version;    /* 软件次版本号 */
+    uint8  sw_patch_version;    /* 软件补丁版本号 */
+} Std_VersionInfoType;
+
 #endif /* STD_TYPES_H */

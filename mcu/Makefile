@@ -125,6 +125,7 @@ SRCS_USER  += EcuAbstraction/CanIf/config/CanIf_Cfg.c
 
 # MCAL 层源文件
 SRCS_USER  += MCAL/Spi/src/Spi.c
+SRCS_USER  += MCAL/Spi/config/Spi_Cfg.c
 
 # ECU Abstraction 层骨架源文件 (待实现)
 #SRCS_USER  += EcuAbstraction/SpiIf/src/SpiIf.c

@@ -151,7 +151,7 @@ pin_settings_config_t g_pin_mux_InitConfigArr0[NUM_OF_CONFIGURED_PINS0] = {
         .gpioBase      = NULL,
         .digitalFilter = false,
     },
-    /* --- PTB16: LPSPI1_SIN ← CH347T MO (ALT3) --- */
+    /* --- PTB16: LPSPI1_SOUT → CH347T MI (ALT3) --- */
     {
         .base          = PORTB,
         .pinPortIdx    = 16U,
@@ -165,7 +165,7 @@ pin_settings_config_t g_pin_mux_InitConfigArr0[NUM_OF_CONFIGURED_PINS0] = {
         .gpioBase      = NULL,
         .digitalFilter = false,
     },
-    /* --- PTB15: LPSPI1_SOUT → CH347T MI (ALT3) --- */
+    /* --- PTB15: LPSPI1_SIN ← CH347T MO (ALT3) --- */
     {
         .base          = PORTB,
         .pinPortIdx    = 15U,
