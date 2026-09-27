@@ -157,7 +157,7 @@ typedef enum { CAN_ERRORSTATE_ACTIVE, CAN_ERRORSTATE_PASSIVE,
 
 ```c
 // Can.h — AUTOSAR 标准 API
-Std_ReturnType Can_Init(const Can_ConfigType *ConfigPtr);
+Std_ReturnType Can_Init(Can_ControllerType Controller, const Can_ConfigType *ConfigPtr);
 Std_ReturnType Can_DeInit(void);
 Std_ReturnType Can_SetControllerMode(Can_ControllerType Controller,
                                      Can_ControllerStateType Transition);

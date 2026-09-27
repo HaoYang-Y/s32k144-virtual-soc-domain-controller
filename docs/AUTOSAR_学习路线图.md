@@ -63,7 +63,7 @@
 
 | 你的代码 | AUTOSAR CP 概念 | 核心关系 |
 |---------|----------------|---------|
-| `SpiIf_WriteIb()` → `Spi_WriteIb()` | **Spi** (MCAL) | SPI 32B 固定帧收发 |
+| `SpiIf_WriteIb()` → `Spi_WriteIb()` | **Spi** (MCAL) | SPI 64B 固定帧收发 |
 | `SpiIf_ReadIb()` → `Spi_ReadIb()` | **Spi** (MCAL) | SPI 帧接收 |
 | 差分编码 / sensor_mask | **PduR** + **Com** | 信号↔PDU 编解码 |
 | CRC8 校验 | **E2E_P01** (CP) | 数据完整性保护 |
@@ -151,8 +151,8 @@
   │   S32K144 FlexCAN ─── USB-CAN 工具 ─── SocketCAN (Ubuntu)   │
   │   (物理 MCU)          (USB 桥接)        (虚拟机)              │
   │                                                               │
-  │   S32K144 LPSPI ──── FT2232H (SPI Slave) ── Ubuntu (libmpsse)│
-  │   (SPI Master)       (USB-SPI 桥)          (虚拟机)           │
+  │   S32K144 LPSPI1 ── CH347T (SPI Master) ─ Ubuntu (spidev)   │
+  │   (SPI Slave)        (USB-SPI 桥)          (虚拟机)           │
   │                                                               │
   │   S32K144 LPUART ─── USB-UART ─── 宿主机串口 (调试日志)       │
   └──────────────────────────────────────────────────────────────┘

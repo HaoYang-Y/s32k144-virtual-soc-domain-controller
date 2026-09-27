@@ -37,11 +37,11 @@ CAN 报文的收发有三种基本模式，区别在于**谁来通知 CPU "数�
 | CPU 开销 | 高（空转消耗） | 中（ISR 上下文切换） | 最低 |
 | 实现复杂度 | 最简单 | 中等 | 复杂 |
 | 丢帧风险 | 高 | 低（需合理设计） | 最低 |
-| 本项目当前使用 | ✅ 在用 | ❌ 未启用 | ❌ 未启用 |
+| 本项目当前使用 | ⚠️ 仅备用 API | ✅ 在用 | ❌ 未启用 |
 
 ---
 
-## 2. 轮询模式（Polling）— 当前项目的做法
+## 2. 轮询模式（Polling）
 
 ### 2.1 原理
 
@@ -57,9 +57,9 @@ CPU 在主循环中不断检查邮箱状态，"有没有新帧？能不能发送
   }
 ```
 
-### 2.2 本项目的轮询实现
+### 2.2 轮询实现示例
 
-来自 [main.c](../../mcu/App/Swc_SignalGateway/src/main.c)：
+下面是一个最小的轮询收发循环（仅作教学示意，**非本项目当前 main.c**）：
 
 ```c
 for(;;)
@@ -68,8 +68,8 @@ for(;;)
     Can_PduType tx = {.id = 0x123UL, .length = 8U};
     tx.data[0] = cnt & 0xFF;
     // ...
-    status_t s = Can_Write(0, TX_MB, &tx);
-    if (s != 0) PINS_DRV_ClearPins(PTD, 1u << 1);  // 红灯 = 发送失败
+    Std_ReturnType s = Can_Write(CAN_HTH_MAKE(0, TX_MB), &tx);
+    if (s != E_OK) PINS_DRV_ClearPins(PTD, 1u << 1);  // 红灯 = 发送失败
 
     // ===== 接收 =====
     Can_PduType rx;
@@ -80,6 +80,10 @@ for(;;)
     delay_ms(500);  // ← 500ms 轮询一次
 }
 ```
+
+> 本项目当前 `main.c` 并非轮询：它采用中断驱动接收（见 §7），主循环只调用
+> `EcuM_MainFunction()`，内部由 `Can_MainFunctionRx()` / `Can_MainFunctionWrite()`
+> 消费中断标志。
 
 ### 2.3 轮询模式的致命缺陷
 
@@ -459,52 +463,59 @@ FLEXCAN_DRV_InstallEventCallback(0, DmaCompleteCallback, NULL);
 ### 7.1 当前状态
 
 ```
-当前实现:
-  SDK 层:  ISR 框架已注册（flexcan_irq.c 已将向量表映射到 FLEXCAN_IRQHandler），
-           FLEXCAN_DRV_Init() 会调用 FLEXCAN_EnableIRQs() 使能 NVIC 中断
-  PAL 层:  CAN_Init() 固定使用 FLEXCAN_RXFIFO_USING_INTERRUPTS（不用 DMA）
-  MCAL 层 (Can.c): 未调用 CAN_InstallEventCallback() → 中断虽然触发但无用户回调
-  APP 层 (main.c): delay_ms(500) + 轮询 Can_Read/Can_Write
-  MCAL 配置: Can_Cfg.h 定义了 CAN_INTERRUPT_ENABLE = STD_ON 但 Can.c 并未使用
+当前实现（中断驱动接收）:
+  SDK 层:  ISR 框架已注册（向量表映射到 FLEXCAN_IRQHandler），
+           FLEXCAN_DRV_Init() 调用 FLEXCAN_EnableIRQs() 使能 NVIC 中断
+  PAL 层:  CAN_Init() 使用中断方式收发（不用 DMA）
+  MCAL 层 (Can.c): Can_EnableInterrupts() 调 CAN_InstallEventCallback()
+                   安装 Can_IrqCallback；ISR 中置位 rxPending / txComplete 标志
+  APP 层 (main.c): 主循环调用 EcuM_MainFunction()，内部
+                   Can_MainFunctionRx() / Can_MainFunctionWrite() 消费标志
+  初始化 (EcuM):   Can_Init → Can_SetControllerMode(STARTED) → Can_EnableInterrupts()
 
-本质: 硬件中断已就绪，MCAL 已安装回调 → **中断驱动模式已启用** ✅
+本质: 硬件中断就绪 + MCAL 安装回调 + 主循环消费 → **中断驱动模式已启用** ✅
 ```
 
-### 7.2 最小改动：在 MCAL 层安装中断回调
+### 7.2 中断链路的实现（已完成）
 
-SDK 已注册好 ISR 向量表，只需在 `Can_Init()` 中安装回调即可激活中断接收：
+本项目已在 MCAL 层实现完整的中断驱动接收，核心组件均在
+[Can.c](../../mcu/MCAL/Can/src/Can.c)：
 
 ```c
-// 在 Can.c 的 Can_Init() 末尾添加:
-CAN_InstallEventCallback(&Can_Instance, Can_McalEventCallback, NULL);
-```
-
-然后实现回调（在 ISR 上下文中执行，需快速返回）：
-```c
-static void Can_McalEventCallback(uint8_t instance, can_event_t event,
-                                   uint32_t buffIdx, void *state)
+/* 1. ISR 回调: 只置位标志, 不做复杂处理 */
+static void Can_IrqCallback(uint32_t instance, can_event_t eventType,
+                             uint32_t buffIdx, void *driverState)
 {
-    if (event == CAN_EVENT_RX_COMPLETE) {
-        can_message_t rx_msg;
-        CAN_Receive(&Can_Instance, buffIdx, &rx_msg);
-        // 存入环形缓冲，不在 ISR 中做复杂处理
-        RingBuffer_Push(&rx_ring, &rx_msg);
-        // 重锁存 RX 邮箱
-        CAN_ConfigRxBuff(&Can_Instance, buffIdx, &Can_RxBuffCfg, rx_id);
-    }
+    if (eventType == CAN_EVENT_RX_COMPLETE)
+        Can_Ctrl[instance].rxPending[buffIdx] = true;
+    else if (eventType == CAN_EVENT_TX_COMPLETE)
+        Can_Ctrl[instance].txComplete[buffIdx] = true;
 }
+
+/* 2. 安装回调 + 武装 RX 邮箱 (EcuM_Init 中调用一次) */
+void Can_EnableInterrupts(void);   // 内部: CAN_InstallEventCallback(Can_IrqCallback)
+                                   //       + 逐个 CAN_Receive() 武装 RX MB
+
+/* 3. 主循环消费 RX: 读 ISR 填好的缓冲 → 上层回调 → 重新武装邮箱 */
+bool Can_MainFunctionRx(void);     // 内部调用注册的 Can_RxCallback
+
+/* 4. 主循环消费 TX 完成 */
+void Can_MainFunctionWrite(void);  // 内部调用注册的 Can_TxCallback
 ```
 
-### 7.3 推荐方案：MCAL 层添加中断支持
+上层回调由 CanIf 注册（[CanIf.c](../../mcu/EcuAbstraction/CanIf/src/CanIf.c)）：
+`Can_RegisterRxCallback(CanIf_McalRxCallback)` 与
+`Can_RegisterTxCallback(CanIf_McalTxCallback)`。
 
-在 `Can.c` 中增加：
+RX 数据流：
+```
+CAN 帧到达 → FlexCAN ISR → Can_IrqCallback (置 rxPending 标志)
+          → Can_MainFunctionRx (EcuM_MainFunction 中周期调用)
+          → Can_RxCallback = CanIf_McalRxCallback → CanIf → PduR → CanTp / Com
+```
 
-```
-1. 环形缓冲实现（rx_ring_buffer.h/c）
-2. RX 中断回调 → Can_RxIndication（标准 AUTOSAR 接口）
-3. Can_MainFunctionRead() — 主循环消费函数
-4. TX 中断回调 → Can_TxConfirmation
-```
+这正是"ISR 只设标志、主循环慢消费"的 AUTOSAR 典型做法：ISR 极短，
+真正的读帧与向上分发都在 `Can_MainFunctionRx()` 中完成。
 
 ### 7.5 量产车的模式选择
 

@@ -42,7 +42,7 @@ MCAL 的做法是：定义一个 AUTOSAR 标准接口，内部调 NXP SDK，但�
 ```c
 // AUTOSAR MCAL 写法（上层代码不依赖任何厂商 SDK）
 Can_PduType pdu = {.id = 0x123, .length = 8, .data = {...}};
-Can_Write(Controller, Hth, &pdu);
+Can_Write(Hth, &pdu);
 ```
 
 换 MCU 时只改 `Can.c` 内部实现，上层代码（CanIf → PduR → Com → RTE → SWC）一行不用动。
@@ -345,7 +345,7 @@ Std_ReturnType Can_Init(Can_ControllerType Controller, const Can_ConfigType *Con
 **内部流程**：
 
 ```
-Can_Init(ConfigPtr)
+Can_Init(Controller, ConfigPtr)
   │
   ├── 1. 保存配置副本到模块静态变量
   │      Can_Config = *ConfigPtr  (值拷贝，不持有指针)
@@ -613,7 +613,7 @@ const Can_ConfigType Can_Config = {
 
 void can_demo(void) {
     // 2. 初始化（由 EcuM 统一调度，应用层不直接调 Can_Init）
-    EcuM_Init();  // 内部: Can_Init(&Can_Config) → Can_SetControllerMode() → CanIf_Init()
+    EcuM_Init();  // 内部: Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) → Can_SetControllerMode() → CanIf_Init()
 
     // 4. 启动控制器
     (void)Can_SetControllerMode(0, CAN_CS_STARTED);
@@ -641,27 +641,30 @@ void can_demo(void) {
 
 ## 7. 位时序：波特率怎么算
 
-CAN 波特率 = 时钟源频率 / (pre_divider + 1) / (1 + prop_seg + phase_seg1 + phase_seg2)
+CAN 波特率 = 时钟源频率 / (pre_divider + 1) / 总TQ
+（总TQ = 1(SYNC) + (prop_seg+1) + (phase_seg1+1) + (phase_seg2+1)，注意寄存器段值都要 +1）
 
 本项目的计算：
 
 ```
 时钟源:      PE 直连外部 8 MHz OSC (CAN_CLK_SOURCE_OSC)
 pre_divider: 0 → 分频系数 = 1
-TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_seg2) = 13 TQ
+TQ 总数:     1(sync,固定) + (7+1) + (4+1) + (1+1) = 1 + 8 + 5 + 2 = 16 TQ
 
-波特率 = 8,000,000 / 1 / 13 ≈ 615,385 bps
+波特率 = 8,000,000 / 1 / 16 = 500,000 bps = 500 kbps
 ```
 
-不是精确的 500,000 bps，而是约 615 kbps。CAN 协议允许一定的波特率偏差（通常 ±1%~±3%），USB-CAN 适配器自动适应。
+精确等于 500,000 bps（500 kbps），采样点 87.5%——这是标准 CAN 的常用配置。
 
-> 如果需要精确 500 kbps，可调整 `pre_divider` 或选择更高精度时钟源。但本项目已验证当前配置与 CANable (gs_usb) 正常通信。
+> 关键点：FlexCAN 寄存器里的 prop_seg / phase_seg1 / phase_seg2 都是"实际段长 − 1"，
+> 硬件读寄存器时会自动 +1。所以段值 7/4/1 实际是 8/5/2 TQ，加上 SYNC 共 16 TQ（不是 13 TQ）。
+> 本项目已验证当前配置与 CANable (gs_usb) 在 500 kbps 下正常通信。
 
 ---
 
 ## 8. 常见问题与调试
 
-### 8.1 Can_Write 返回 STATUS_ERROR
+### 8.1 Can_Write 返回 E_NOT_OK（发送失败）
 
 | 可能原因 | 排查方法 |
 |----------|---------|
@@ -674,9 +677,9 @@ TQ 总数:     1 (sync_seg, 固定) + 7 (prop_seg) + 4 (phase_seg1) + 1 (phase_s
 | 可能原因 | 排查方法 |
 |----------|---------|
 | RX MB 的过滤 ID 不匹配 | 检查 `rx_mailboxes[0].id` 是否等于发送方的 CAN ID |
-| 没调 `Can_SetControllerMode(STARTED)` | 同 7.1 |
+| 没调 `Can_SetControllerMode(STARTED)` | 同 8.1 |
 | CAN 总线物理断开 | 检查 CAN_H/CAN_L 接线和 120Ω 终端电阻 |
-| 波特率不匹配 | 双方波特率必须一致（允许约 ±3% 偏差） |
+| 波特率不匹配 | 双方必须配置相同波特率（本项目 500 kbps）；容差很小，500 kbps 约 ±1% |
 
 ### 8.3 Can_Write 第一次成功，第二次失败
 

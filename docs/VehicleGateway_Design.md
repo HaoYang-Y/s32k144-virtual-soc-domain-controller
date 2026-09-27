@@ -17,7 +17,7 @@
 |----|------|------|---------|-------------|
 | MCU | NXP S32K144 | CAN 通信 + 信号采集 | 裸机 C，CP 四层模型 | CP: MCAL/ECU Abstraction/RTE/SWC |
 | MPU | Ubuntu 24.04 VM | 信号处理 + SOME/IP 发布 | C++ 守护进程，AP 三层模型 | AP: Platform/Service/Communication |
-| MCU↔MPU 通信 | FT2232H USB-SPI 桥 | SPI Master(MCU)→Slave(FT2232H) | 自定义协议 32B 固定帧 | CP: Spi + Com Stack |
+| MCU↔MPU 通信 | CH347T USB-SPI 桥 | SPI Master(CH347T)→Slave(MCU) | 64B 固定帧全双工（原始交换） | CP: Spi + Com Stack |
 | CAN 验证 | FlexCAN0 + USB-CAN | CAN 2.0B 报文收发 | DBC 信号矩阵 | CP: Can/CanIf/PduR |
 | RTE 模拟 | Rte.h/c | SWC ↔ BSW 桥接 | volatile 共享内存，零开销 | CP: RTE |
 | MCU 调试输出 | LPUART1 | 日志/状态打印 | CDD/Uart | CP: CDD |
@@ -29,11 +29,11 @@
 ```
 PC (宿主机)
 ├── Ubuntu 24.04 VM
-│   ├── Signal Bridge Daemon (vsomeip + libmpsse)
-│   └── FT2232H (USB 直通, SPI Slave)
+│   ├── Signal Bridge Daemon (vsomeip + spidev)
+│   └── CH347T (USB 直通, SPI Master)
 │
 └── S32K144 开发板
-    ├── LPSPI0 ── SPI Master → FT2232H
+    ├── LPSPI1 ── SPI Slave ← CH347T
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
     ├── LPUART1 ── UART → 宿主机串口（调试日志）
     └── GPIO 按键 (车门×4 + 档位 P/R/N/D)
@@ -51,7 +51,11 @@ PC (宿主机)
 
 ## 3. SPI 通信协议
 
-### 通信模型: MCU Master → FT2232H Slave, 固定 32B 帧, 1MHz → 0.256ms/次
+### 通信模型: CH347T Master → S32K144 Slave, 固定 64B 帧全双工, 1MHz
+
+> ⚠️ **现状**: 当前为 **64B 固定帧全双工原始交换**（`spidev` 验证：MCU 预填 `A0 A1…`、SOC 发
+> `00 01…`）。下述 `CMD/SIZE/PAYLOAD/CRC8` 差分协议为**尚未实现的应用层设计**，且原设计假设
+> MCU 为主机主动轮询；现 MCU 为从机、由 CH347T/SOC 发起，需按从机模型重新设计。
 
 ### 帧格式
 ```
@@ -190,7 +194,7 @@ main():
 │     ara/core/  — ErrorCode, Optional, Result            │
 │     ara/exec/  — 执行管理                                │
 │     ara/log/   — 日志模块                                │
-│     Spi/       — SPI 驱动封装 (libmpsse)                 │
+│     Spi/       — SPI 驱动封装 (spidev/CH347T)           │
 ├──────────────────────────────────────────────────────────┤
 │  ① diag/ara/diag/                                        │
 │     UdsServer — ISO 14229 诊断服务 (预留)                 │
@@ -218,7 +222,7 @@ main():
 
 **核心结论:** 端到端总延迟 ≤ 50ms，瓶颈为 SPI 轮询间隔
 
-**数据路径:** MCAL ISR → RTE(零开销) → SWC → CanIf/SpiIf → SPI(32B 固定帧) → Platform ReadFrame → SpiGateway 解码 → SignalFusion → SOME/IP notify
+**数据路径:** MCAL ISR → RTE(零开销) → SWC → CanIf/SpiIf → SPI(64B 固定帧) → Platform ReadFrame → SpiGateway 解码 → SignalFusion → SOME/IP notify
 
 ---
 

@@ -116,10 +116,14 @@ Domain_Controller/
 
 S32K144 的内存布局：
 
-| 区域   | 地址范围                | 大小   |
-|--------|------------------------|--------|
-| Flash  | 0x00000000 - 0x0007FFFF | 512 KB |
-| SRAM   | 0x1FFF8000 - 0x20003FFF | 48 KB  |
+| 区域    | 地址范围                | 大小   |
+|---------|------------------------|--------|
+| Flash   | 0x00000000 - 0x0007FFFF | 512 KB |
+| SRAM_L  | 0x1FFF8000 - 0x1FFFFFFF | 32 KB  |
+| SRAM_U  | 0x20000000 - 0x20006FFF | 28 KB  |
+
+> 器件共有 64 KB SRAM；链接脚本 `S32K144_64_flash.ld` 映射 60 KB
+> （SRAM_L 32 KB + SRAM_U 28 KB，见脚本 `MEMORY` 段 `m_data` / `m_data_2`）。
 
 ---
 
@@ -135,7 +139,7 @@ S32K144 的内存布局：
 |----|------|------|
 | MCAL | `MCAL/Gpio/src/Gpio.c` | GPIO 驱动（SDK PINS_DRV API） |
 | MCAL | `MCAL/Mcu/src/Mcu.c`, `MCAL/Mcu/src/clock_config.c` | 时钟配置 |
-| MCAL | `MCAL/Can/src/Can.c` | FlexCAN 驱动（SDK FLEXCAN_DRV API） |
+| MCAL | `MCAL/Can/src/Can.c` | CAN 驱动（SDK CAN PAL `CAN_*` API，内部封装 FlexCAN） |
 | MCAL | `MCAL/Spi/src/Spi.c` | SPI 驱动 |
 | MCAL | `MCAL/Port/src/Port.c`, `MCAL/Port/src/pin_mux.c` | 引脚复用 |
 | ECU Abstraction | `EcuAbstraction/CanIf/src/CanIf.c` | CAN 接口抽象 |
@@ -301,7 +305,7 @@ JLinkExe -device S32K144 -if SWD -speed 4000 -autoconnect 1
 | RTE | RTE | `RTE/Rte.c` | RTE | ⏳ 骨架已有 |
 | SWC | SignalGateway | `App/Swc_SignalGateway/src/` | SWC | ⏳ 骨架已有 |
 
-> **说明**：MCAL 层使用 NXP SDK DRV API（`PINS_DRV_*`、`FLEXCAN_DRV_*`、`LPUART_DRV_*` 等），
+> **说明**：MCAL 层使用 NXP SDK 驱动 API（`PINS_DRV_*`、CAN PAL 的 `CAN_*`、`LPUART_DRV_*` 等），
 > API 命名遵循 AUTOSAR CP 规范（`Gpio_ReadPin`、`Mcu_InitClock`、`Can_Transmit` 等）。
 
 ---

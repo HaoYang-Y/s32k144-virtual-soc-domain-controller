@@ -344,7 +344,7 @@ EcuM_Init();
 
 // EcuM.c — EcuM 按 AUTOSAR 顺序统一调度所有 BSW 模块
 EcuM_Init()
-  ├── Can_Init(&Can_Config);                  // MCAL 层（配置在 Can_Cfg.c）
+  ├── Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0);  // MCAL 层（配置在 Can_Cfg.c）
   ├── Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
   ├── CanIf_Init();                           // ECU Abstraction 层
   ├── PduR_Init();                            // Services 层

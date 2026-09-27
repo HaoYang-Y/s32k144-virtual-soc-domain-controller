@@ -42,15 +42,31 @@
 
 ## 待做任务
 
-### MCAL
+### MCU 侧 — SPI 阶段（当前重点）
 
-- [ ] **IoHwAb**: IoHwAb_ReadPin 抽象封装
-- [ ] **UART 硬件验证**: 宿主机串口工具接收 UART 日志
+- [ ] **SPI 走通 AUTOSAR 分层**: 现仅到 MCAL —— `EcuM.c:37` 直接 `Spi_Init()`、`main.c:87/98/101`
+  直接调 `Spi_WriteIB/Spi_SyncTransmit/Spi_ReadIB`，绕过 SpiIf。需补 `SWC→RTE→…→SpiIf→Spi` 路径
+  （对照 CAN 已通链路 `SWC→RTE→Com→PduR→CanTp→CanIf→Can`）。
+- [ ] **SpiIf 接口**: `SpiIf/src/SpiIf.c`(34 行) 仅骨架；`EcuM.c:46` 仍 `/* TODO: SpiIf_Init(); */`。
+  实现 `SpiIf_WriteIb/ReadIb` → MCAL Spi，并在 EcuM 里初始化。
+- [ ] **SPI 应用层协议（需按从机模型重设）**: 当前仅 64B 原始全双工交换（已验证）。32B 差分协议
+  （CMD/SIZE/PAYLOAD/CRC8、sensor_mask 差分、5s 全量、CRC 异常主动同步）未实现；原设计假设 MCU 主机
+  主动轮询，现 MCU 为从机、由 CH347T/SOC 发起，触发模型不成立，需重新设计。
 
-### ECU 抽象层 + Services
+### MCU 侧 — 其他模块
 
-- [ ] **SpiIf 接口**: SpiIf_WriteIb/ReadIb → 调用 MCAL Spi 驱动，替换骨架
-- [ ] **BswM**: BSW 模式管理器 (模式仲裁、通信启停、ECU 状态切换)
+- [ ] **IoHwAb**: IoHwAb_ReadPin 抽象封装未实现。
+- [ ] **BswM**: `BswM/src/BswM.c:8-9` `BswM_Init/BswM_MainFunction` 均为 `{ /* TODO */ }`；
+  模式仲裁 / 通信启停 / ECU 状态切换未实现。
+- [ ] **UART 硬件验证**: Uart 代码已实现，宿主机 USB-UART 回环未实测。
+
+### 文档一致性
+
+- [ ] **手顺 LPSPI1 时钟值纠错**: `docs/spi/CH347T_SPI链路打通手顺.md:176` 写「FIRC/2 = 24MHz」；按
+  `clock_config.c`（`LPSPI1_CLK` = `CLK_SRC_FIRC_DIV2`，FIRCDIV2 分频 `DIV_BY_1`，FIRC 48MHz）实为
+  **48MHz**。对 1MHz SPI 从机无功能影响，纯文档纠错。
+- [ ] **设计文档状态行过时**: `VehicleGateway_Design.md:10`「CAN 和 UART 尚未调通（2026-06-19）」已过时
+  （CAN 全链路已实测、SPI 已打通）。
 
 ### SOC 端
 
@@ -66,4 +82,4 @@
 
 ---
 
-> 最后更新: 2026-08-23 (SPI 链路实测打通；UDS 决定不做)
+> 最后更新: 2026-09-27 (整合 MCU 侧问题清单：SPI 分层/协议、SpiIf、BswM、UART、文档纠错)

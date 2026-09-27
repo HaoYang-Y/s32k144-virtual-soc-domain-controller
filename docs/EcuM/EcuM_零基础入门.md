@@ -15,7 +15,7 @@ int main(void)
 {
     Clock_Init();       // 先搞定时钟
     Port_Init();        // 再配引脚
-    Can_Init(&canCfg);  // 初始化 CAN 控制器
+    Can_Init(CAN_CONTROLLER_0, &canCfg);  // 初始化 CAN 控制器
     CanIf_Init();       // 初始化 CAN 接口层
     Log_Init();         // 初始化日志
 
@@ -168,7 +168,7 @@ void EcuM_Init(void)
     Port_Init();                              // 引脚复用
 
     /* --- MCAL 层 --- */
-    if (Can_Init(&Can_Config) != E_OK) {     // CAN 硬件初始化
+    if (Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0) != E_OK) {  // CAN 硬件初始化
         return;
     }
     Can_SetControllerMode(CAN_CONTROLLER_0, CAN_CS_STARTED);
@@ -202,7 +202,7 @@ main() 启动
          ├─ CLOCK_DRV_Init()    ← 硬件前置: 时钟（最底层，先配）
          ├─ Port_Init()         ← 硬件前置: 引脚复用
          │
-         ├─ Can_Init(&Can_Config)  ← MCAL 层 (配置在 Can_Cfg.c)
+         ├─ Can_Init(CAN_CONTROLLER_0, &Can_Config_CAN0)  ← MCAL 层 (配置在 Can_Cfg.c)
          ├─ Can_SetControllerMode(STARTED)
          ├─ Can_EnableInterrupts()  ← RX 中断模式使能
          │

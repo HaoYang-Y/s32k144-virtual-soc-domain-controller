@@ -45,18 +45,18 @@ NXP S32 SDK                ← 底层（芯片头文件 + 启动代码 + 链接�
 ```
 PC (宿主机)
 ├── Ubuntu 24.04 VM
-│   ├── Signal Bridge Daemon（vsomeip + libmpsse）
-│   └── FT2232H（USB 直通，SPI Slave）
+│   ├── Signal Bridge Daemon（vsomeip + spidev）
+│   └── CH347T（USB 直通，SPI Master）
 │
 └── S32K144 开发板（MCU）
-    ├── LPSPI0 ──── SPI Master → FT2232H
+    ├── LPSPI1 ──── SPI Slave ← CH347T
     ├── FlexCAN0 ── CAN → USB-CAN 分析仪
     ├── LPUART1 ── UART → 宿主机串口（调试日志）
     └── GPIO 按键（车门×4 / 档位 P/R/N/D）
 ```
 
-> MCU 通过 SPI 将信号帧传输给 SOC，同时通过 CAN 发布到其他域控制器。
-> SPI 使用 32B 固定帧 + 差分协议，详见 [VehicleGateway_Design.md](VehicleGateway_Design.md)。
+> MCU 作为 SPI 从机，由 SOC 侧的 CH347T 主机发起传输、交换信号帧；同时通过 CAN 发布到其他域控制器。
+> SPI 当前为 64B 固定帧全双工原始交换（spidev 已验证），详见 [VehicleGateway_Design.md](VehicleGateway_Design.md)。
 
 ---
 
@@ -73,7 +73,7 @@ PC (宿主机)
         ↓         零开销宏连接 SWC 和底层
 阶段 4：CAN 通信（FlexCAN 收发 + CAN 分析仪验证）
         ↓         附 CP Can/CanIf/PduR/Com 概念
-阶段 5：SPI 通信（32B 固定帧 + 差分 + CRC8）
+阶段 5：SPI 通信（64B 固定帧全双工，MCU 从机 / CH347T 主机）
         ↓         附 CP Spi/Com Stack 概念
 阶段 6：SOME/IP 服务通信（vsomeip + SD）
         ↓         附 AP ara::com/ara::sd 概念
@@ -87,7 +87,7 @@ PC (宿主机)
 ### 硬件确认
 
 - 确认 S32K144 开发板供电正常
-- 确认 FT2232H USB-SPI 桥被 Ubuntu 虚拟机识别（USB 直通）
+- 确认 CH347T USB-SPI 桥被 Ubuntu 虚拟机识别（USB 直通）
 - 确认 USB-CAN 工具被 Ubuntu 虚拟机识别
 - 确认 USB-UART 串口被宿主机识别（用于 MCU 调试日志）
 - CAN 总线两端接 **120Ω 终端电阻**
@@ -99,8 +99,8 @@ PC (宿主机)
 sudo modprobe gs_usb   # 或 slcan / peak_usb
 sudo ip link set can0 up type can bitrate 500000
 
-# FT2232H 驱动（libmpsse 依赖 libftdi1）
-sudo apt install libftdi1-dev
+# CH347T USB-SPI 桥驱动（内核模块 mfd-ch347 + spi-ch347 + spidev）
+# 编译加载与 spidev 设备创建见 docs/spi/CH347T_SPI链路打通手顺.md §4
 
 # 验证
 candump can0
@@ -260,7 +260,11 @@ S32K144 FlexCAN0                  Ubuntu 虚拟机
 
 ## 阶段 5：SPI 通信（2~3 周）
 
-> **目标**: MCU Master → FT2232H Slave，32B 固定帧，差分协议，CRC8 校验。
+> **目标**: 打通 CH347T 主机 ↔ S32K144 从机（LPSPI1）的 SPI 链路。
+>
+> ⚠️ **现状**: 当前为 **64B 固定帧全双工原始交换**（`spidev_test` 已验证：MCU 预填 `A0 A1…`、
+> SOC 发 `00 01…`）。下面的 `CMD/SIZE/PAYLOAD/CRC8` 32B 差分协议是**尚未实现的应用层设计**，
+> 且原设计假设 **MCU 为主机主动轮询**；现 MCU 为从机、由 SOC/CH347T 发起，需按从机模型重设。
 
 ### SPI 帧格式
 
@@ -283,15 +287,16 @@ CMD(1B) | SIZE(1B) | PAYLOAD(28B) | CRC8(1B)
 ### 验证方法
 
 ```
-S32K144 (Master)                 Ubuntu (Slave)
-  SPI 发 32B 帧 →  FT2232H  →  libmpsse 读取
-                                   │
-                               SpiGateway 解码
-                                   │
-                               全量状态缓存
+Ubuntu (Master 侧)               S32K144 (Slave)
+  CH347T 发起 64B 交换  ←SPI→  LPSPI1 从机收发
+        │                            │
+  spidev_test / SpiGateway     Spi_ReadIB / Spi_WriteIB
+        │
+   (未来) 差分帧解码 + 全量状态缓存
 ```
 
-✅ **完成标准**: MCU 端 SPI 发送稳定（1MHz），SOC 端能正确解码差分帧，全量状态缓存一致。
+✅ **完成标准**: CH347T ↔ S32K144 双向 64B 交换稳定（1MHz）——`spidev_test` 收到 MCU 预填的
+`A0 A1…`、MCU 收到 SOC 的 `00 01…`。（差分帧解码、全量状态缓存为后续应用层目标）
 
 **🔄 AUTOSAR CP 概念穿插**: Com Stack 负责信号↔Pdu 编解码，Spi 驱动提供 `Spi_WriteIb()` 接口。
 
@@ -341,7 +346,7 @@ S32K144 (Master)                 Ubuntu (Slave)
 | 2 | ECU 抽象层 + CDD | 1~2 周 | CanIf / IoHwAb / SpiIf / Uart |
 | 3 | RTE + SWC | 1~2 周 | 共享缓冲区 + 周期调度 |
 | 4 | CAN 通信 | 2~3 周 | FlexCAN 收发 + CAN 分析仪验证 |
-| 5 | SPI 通信 | 2~3 周 | 32B 固定帧 + 差分 + CRC8 |
+| 5 | SPI 通信 | 2~3 周 | 64B 固定帧全双工（差分协议为后续） |
 | 6 | SOME/IP 服务通信 | 3~4 周 | vsomeip 服务发布 + SD |
 | 7 | UDS 诊断 | 后续 | 诊断协议栈 |
 

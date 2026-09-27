@@ -272,7 +272,7 @@ can_buff_config_t can0_rx_cfg = {
 };
 
 // MCAL Can_ConfigType（实际配置在 Can_Cfg.c 中，由 EcuM 引用）
-const Can_ConfigType Can_Config = {
+const Can_ConfigType Can_Config_CAN0 = {
     .max_num_mb        = 16,   // 共 16 个邮箱
     .num_tx_mailboxes  = 1,    // 只用 1 个 TX 邮箱
     .num_rx_mailboxes  = 1,    // 只用 1 个 RX 邮箱
@@ -309,11 +309,10 @@ Can_PduType tx_msg = {
     .data        = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88},
 };
 
-// 2. 重新配置 TX 邮箱（必须！因为上次发送后 CODE 变成了 INACTIVE）
-CAN_ConfigTxBuff(&Can_Instance, TX_MB, &Can_TxBuffCfg);
-
-// 3. 发送
-Can_Write(TX_MB, &tx_msg);
+// 2. 发送 —— Hth 由 CAN_HTH_MAKE(控制器, 邮箱) 编码
+//    Can_Write 内部会先 CAN_AbortTransfer + CAN_ConfigTxBuff 重新激活邮箱,
+//    上层无需手动重配 (原理见 §3.1 / §7.1)
+Can_Write(CAN_HTH_MAKE(0, TX_MB), &tx_msg);
 ```
 
 ### 6.4 接收一条报文
@@ -321,62 +320,52 @@ Can_Write(TX_MB, &tx_msg);
 ```c
 Can_PduType rx_msg;
 
-// 阻塞读取 RX 邮箱
-Can_Read(RX_MB, &rx_msg);
+// 非阻塞读取 RX 邮箱 (Controller=0, Hrh=RX_MB 为绝对邮箱索引)
+Can_Read(0, RX_MB, &rx_msg);
 
-// 此时 rx_msg.id、rx_msg.length、rx_msg.data[] 已被填充
+// 若返回 STATUS_SUCCESS, rx_msg.id、rx_msg.length、rx_msg.data[] 已被填充
 ```
 
 ---
 
 ## 7. 常见问题与排查
 
-### 7.1 STATUS_BUSY — TX 邮箱发送失败
+### 7.1 STATUS_BUSY — TX 邮箱发送失败（Can_Write 已内部规避）
 
-**现象**：调用 `Can_Write()` 返回 `STATUS_BUSY`（值 2），报文发不出去。
+**底层现象**：PAL 层 `CAN_Send()` 若发现 TX 邮箱未就绪，会返回 `STATUS_BUSY`，报文发不出去。
 
 **底层链路**：
 ```
-Can_Write() → CAN_Send() → FLEXCAN_DRV_Send() → FLEXCAN_StartSendData()
-                                                    │
-                                    检查 state->mbs[mb_idx].state != FLEXCAN_MB_IDLE
-                                                    │
-                                          返回 STATUS_BUSY
+Can_Write() → CAN_AbortTransfer() + CAN_ConfigTxBuff() → CAN_Send()
+                → FLEXCAN_DRV_Send() → FLEXCAN_StartSendData()
+                                          │
+                          检查 state->mbs[mb_idx].state != FLEXCAN_MB_IDLE
+                                          │
+                                返回 STATUS_BUSY
 ```
 
-**原因**：上次发送后，硬件把 TX 邮箱的 CODE 设成了 `TX_INACTIVE`（0x8），PAL 驱动内部 `state->mbs[mb_idx].state` 不是 `FLEXCAN_MB_IDLE`，返回 `STATUS_BUSY`。
+**原因**：上次发送后，硬件把 TX 邮箱的 CODE 设成了 `TX_INACTIVE`（0x8），PAL 驱动内部 `state->mbs[mb_idx].state` 不是 `FLEXCAN_MB_IDLE`，`CAN_Send()` 返回 `STATUS_BUSY`。
 
-**解决**：**每次 `Can_Write()` 之前必须先调用 `CAN_ConfigTxBuff()` 重新激活邮箱**。参考 [Can.c](../../mcu/MCAL/Can/src/Can.c) 中 `Can_Write()` 的实现——第一步就是 `CAN_ConfigTxBuff()`。
+**本项目的处理**：`Can_Write()` **每次发送前都先 `CAN_AbortTransfer()` 再 `CAN_ConfigTxBuff()`** 重新激活邮箱，因此不会出现 `STATUS_BUSY`。见 [Can.c](../../mcu/MCAL/Can/src/Can.c) 中 `Can_Write()` 的前两步。
 
-**其他可能的 `Can_Write()` 返回值**：
-| 返回值 | 含义 |
-|--------|------|
-| `STATUS_SUCCESS` (0) | 发送成功 |
-| `STATUS_BUSY` (2) | 邮箱处于忙状态（未重配） |
-| `STATUS_ERROR` (1) | 参数错误（Hth 越界 / PDU 为空 / 未初始化） |
-| `STATUS_CAN_BUFF_OUT_OF_RANGE` | 邮箱索引超出硬件范围 |
+**注意返回值层级**：MCAL 的 `Can_Write()` 返回 `Std_ReturnType`（`E_OK` / `E_NOT_OK`），它把内部 `CAN_Send()` 的 `status_t` 映射过来。下表是内部 `CAN_Send()`（PAL 层）的返回值：
+
+| `CAN_Send()` 返回值 | 含义 | `Can_Write()` 映射 |
+|--------|------|--------|
+| `STATUS_SUCCESS` (0) | 发送成功发起 | `E_OK` |
+| `STATUS_BUSY` (2) | 邮箱忙（未重配） | `E_NOT_OK` |
+| `STATUS_ERROR` (1) | 参数/状态错误 | `E_NOT_OK` |
+| `STATUS_CAN_BUFF_OUT_OF_RANGE` | 邮箱索引超出硬件范围 | `E_NOT_OK` |
+
+此外 `Can_Write()` 自身的六项入参校验（控制器越界 / 未初始化 / 未 STARTED / MB 越界 / 空指针 / 长度 >8）失败时直接返回 `E_NOT_OK`。
 
 ### 7.2 RX 邮箱"空读" — 没有新数据
 
-**现象**：`Can_Read()` 返回 `STATUS_SUCCESS` 但数据是旧的（重复读同一帧）。
+**现象**：轮询 API `Can_Read()` 返回 `STATUS_SUCCESS` 但数据可能是旧的（重复读同一帧）。
 
-**底层链路**：
-```
-Can_Read() → CAN_Receive() → FLEXCAN_DRV_Receive() → FLEXCAN_StartRxMessageBufferData()
-                                                          │
-                                          检查 state->mbs[mb_idx].state != FLEXCAN_MB_IDLE
-                                                          │
-                                                返回 STATUS_BUSY
-```
+**注意**：底层 `FLEXCAN_GetMsgBuff()` 本身**不检查 CODE 字段**——它直接读取邮箱 RAM 的 cs + msgId + data 并返回。这意味着若直接轮询，即使 CODE = `RX_EMPTY`（没有新帧），也可能"成功"读到旧数据。如需严格判断，应检查 `cs` 字段的 CODE 部分（bit 24~27）是否为 `0x2`（RX_FULL）。
 
-**注意**：`FLEXCAN_GetMsgBuff()` 本身**不检查 CODE 字段**——它直接读取邮箱 RAM 的 cs + msgId + data 并返回。这意味着即使 CODE = `RX_EMPTY`（没有新帧），它也能"成功"读到旧数据。
-
-**本项目的处理**（[main.c](../../mcu/App/Swc_SignalGateway/src/main.c) 第 57 行）：
-```c
-if (Can_Read(0, RX_MB, &rx) == STATUS_SUCCESS)
-    PINS_DRV_TogglePins(PTD, 1u << 16);  // 只在返回成功时闪灯
-```
-当前代码只检查返回值，不区分"新帧"还是"重复读旧帧"。如需严格判断，应检查 `cs` 字段的 CODE 部分（bit 24~27）是否为 `0x2`（RX_FULL）。
+**本项目如何规避**：项目采用**中断驱动接收**（见 [6_CAN收发模式详解.md](./6_CAN收发模式详解.md)），不在应用层轮询 `Can_Read()`。FlexCAN 的 RX 完成中断只在**真正收到新帧**时触发 `CAN_EVENT_RX_COMPLETE`，[Can.c](../../mcu/MCAL/Can/src/Can.c) 的 `Can_IrqCallback()` 据此置位 `rxPending` 标志，再由 `Can_MainFunctionRx()` 消费。标志只在硬件报告新帧时置位，因此每帧只被消费一次，不存在"重复读旧帧"的问题。
 
 ### 7.3 RX_OVERRUN — 接收丢帧（硬件覆盖）
 
@@ -417,14 +406,15 @@ if (code == 0x6) {
 
 ### 8.1 TX 邮箱"满"— 实质是邮箱失活，而非真的满
 
-**问题本质**：TX 邮箱发送完成后 CODE 变为 `TX_INACTIVE`（0x8），`Can_Write()` 返回 `STATUS_BUSY`。这不是"满"，而是**失活**。
+**问题本质**：TX 邮箱发送完成后 CODE 变为 `TX_INACTIVE`（0x8）。若不重新激活就再次发送，底层 `CAN_Send()` 会返回 `STATUS_BUSY`。这不是"满"，而是**失活**。
 
-**当前项目已规避**（[Can.c](../../mcu/MCAL/Can/src/Can.c) 第 160 行）：
+**当前项目已规避**（[Can.c](../../mcu/MCAL/Can/src/Can.c) 的 `Can_Write()` 内部）：
 ```c
-// 每次 Can_Write() 第一步: 重新激活 TX 邮箱
-CAN_ConfigTxBuff(&Can_Instance, Hth, &Can_TxBuffCfg);
-// 然后才发送
-return CAN_Send(&Can_Instance, Hth, &tx_msg);
+// 每次 Can_Write() 发送前: 先中止再重新激活 TX 邮箱
+(void)CAN_AbortTransfer(&c->instance, mb_idx);
+CAN_ConfigTxBuff(&c->instance, mb_idx, &c->txBuffCfg);
+// 然后才发送 (status_t 映射为 E_OK / E_NOT_OK)
+return CAN_STATUS_TO_STD_RET(CAN_Send(&c->instance, mb_idx, &tx_msg));
 ```
 只要照此规范，**单 TX 邮箱不会出现"满"的问题**。
 
@@ -470,18 +460,20 @@ if (code == FLEXCAN_RX_OVERRUN) {  // 0x6
 | ⭐⭐ | **增加 RX 邮箱** | 不同 ID 分散到独立邮箱，硬件自动分流 |
 | ⭐ | **使用 FIFO 模式** | 队列满时拒绝新帧（旧帧安全），而非覆盖 |
 
-#### 层面 2：CPU 读速跟不上（当前项目的主要风险）
+#### 层面 2：CPU 读速跟不上（轮询模式的风险）
 
-当前 `main.c` 是 500ms 轮询一次。如果对方以 10ms 间隔发帧，500ms 内 50 帧只有最后 1 帧被读到——前 49 帧全部 OVERRUN。
+如果用轮询且间隔过大就会丢帧。假设 500ms 轮询一次、对方以 10ms 间隔发帧，500ms 内 50 帧只有最后 1 帧被读到——前 49 帧全部 OVERRUN。
 
 **量化风险**：
 ```
 安全轮询频率 > 1 / (最短帧间隔 × RX 邮箱数)
               = 1 / (10ms × 1) = 100 Hz → 轮询间隔 ≤ 10ms
-当前轮询间隔 = 500ms → 理论上只收得到 1/50 的帧
+若轮询间隔 = 500ms → 理论上只收得到 1/50 的帧
 ```
 
-**中断驱动的示例**（推荐改造方向）：
+> 本项目已用中断驱动接收规避此风险：帧到达即触发中断置位标志，由 `Can_MainFunctionRx()` 消费，不依赖轮询间隔。
+
+**中断驱动的示例**（通用示意；本项目实际实现见 [6_CAN收发模式详解.md](./6_CAN收发模式详解.md) §7.2，为"ISR 置标志 + Can_MainFunctionRx 消费"）：
 ```c
 // 1. RX 邮箱中断服务函数
 void CAN0_ORed_0_15_MB_IRQHandler(void) {
@@ -513,11 +505,10 @@ void main_loop(void) {
 ### 8.3 错误处理决策树
 
 ```
-Can_Write() 返回值:
-  ├─ STATUS_SUCCESS (0)        → 发送完成 ✓
-  ├─ STATUS_BUSY (2)           → 邮箱失活，重新 CAN_ConfigTxBuff() 后重试
-  ├─ STATUS_ERROR (1)          → 检查参数: Hth 是否越界 / PDU 是否为空
-  └─ STATUS_CAN_BUFF_OUT_OF_RANGE → 邮箱索引超过硬件最大值
+Can_Write() 返回值 (Std_ReturnType):
+  ├─ E_OK      → 发送已发起 ✓ (内部 CAN_Send 返回 STATUS_SUCCESS)
+  └─ E_NOT_OK  → 失败: 入参校验未过 (控制器/MB 越界、未 STARTED、空指针、长度>8)
+                 或内部 CAN_Send 返回非 SUCCESS
 
 Can_Read() 返回值:
   ├─ STATUS_SUCCESS (0)        → 检查 cs.CODE: 0x2=新帧 / 0x4=旧数据(空读)
