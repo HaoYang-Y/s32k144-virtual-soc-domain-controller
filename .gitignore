@@ -28,6 +28,9 @@ obj_ram/
 mcu/S32_SDK_S32K1xx_RTM_4.0.2/*
 !mcu/S32_SDK_S32K1xx_RTM_4.0.2/.gitkeep
 
+# ---- vsomeip 源码（本地下载，不提交） ----
+soc/communication/vsomeip/vsomeip-*/
+
 # ---- PDF 文件 ----
 *.pdf
 

@@ -247,6 +247,7 @@ s32k144-virtual-soc-domain-controller/
 │   │
 │   ├── communication/           ← ② 通信层
 │   │   ├── ara/com/              SOME/IP 服务通信（Proxy, Skeleton, SD）
+│   │   ├── vsomeip/              vsomeip 3.5.6 源码（本地下载，git 忽略）
 │   │   └── SpiGateway/           SPI 帧处理（解码 MCU 发来的 SPI 帧）
 │   │
 │   ├── diag/                    ← ③ 诊断层
@@ -272,8 +273,8 @@ s32k144-virtual-soc-domain-controller/
 # MCU 交叉编译工具链
 sudo apt install gcc-arm-none-eabi make
 
-# SOC 构建工具
-sudo apt install cmake g++
+# SOC 构建工具（vsomeip 3.5.6 依赖 Boost >= 1.66）
+sudo apt install cmake g++ libboost-system-dev libboost-thread-dev libboost-filesystem-dev
 
 # 验证
 arm-none-eabi-gcc --version

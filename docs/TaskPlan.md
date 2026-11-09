@@ -72,7 +72,7 @@
 
 - [ ] **SpiDriver + SpiGateway 实现**: 基于 CH347T 已验证链路，用 SpiDriver/SpiGateway 替换 spidev_test 直通，走正式网关路径联调
 - [ ] **SignalFusion**: ConfigManager + 信号处理
-- [ ] **SOME/IP 服务**: vsomeip Event 发布 + Service Discovery
+- [ ] **SOME/IP 服务**: vsomeip 3.5.6 Event 发布 + Service Discovery（源码已放 SOC communication 层）
 
 ### 远期
 
@@ -82,4 +82,4 @@
 
 ---
 
-> 最后更新: 2026-09-27 (整合 MCU 侧问题清单：SPI 分层/协议、SpiIf、BswM、UART、文档纠错)
+> 最后更新: 2026-11-09 (确定 vsomeip 3.5.6 为 SOC 集成版本)

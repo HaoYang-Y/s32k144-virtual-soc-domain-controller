@@ -1,0 +1,9 @@
+vsomeip 版本: 3.5.6
+下载地址: https://github.com/COVESA/vsomeip/releases/tag/3.5.6
+源码目录: vsomeip-3.5.6/（本地源码，已在 .gitignore 中忽略，不提交）
+用途: SOC 端 SOME/IP 协议栈实现（位于 ara::com 网络绑定层）
+编译标准: CMAKE_CXX_STANDARD 17，与 SOC 工程的 C++17 一致
+依赖: Boost >= 1.66（system/thread/filesystem）、CMake >= 3.13
+选型说明: 3.5.6 是 Docker 下 SOME/IP-SD 回归前的最后一版；3.5.7+ 在容器内需
+          执行 ip route add 224.0.0.0/4 dev eth0
+回归链接: https://github.com/COVESA/vsomeip/issues/947

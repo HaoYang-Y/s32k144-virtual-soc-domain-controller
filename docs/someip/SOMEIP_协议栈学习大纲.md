@@ -42,20 +42,25 @@
 7. `security/` / `e2e_protection/` / `tracing/` — 暂不读，以后有需要再看。
 
 ## 跑起来看分层（贴合 log + pcap 的习惯）
-- 编译 vsomeip 3.7.6（C++20 / Boost ≥ 1.75 / CMake 3.13+），跑官方 examples（request-response / subscribe-notify / hello_world）。
+- 编译 vsomeip 3.5.6（C++17 / Boost ≥ 1.66 / CMake 3.13+），跑官方 examples（request-response / subscribe-notify / hello_world）。
 - 开 vsomeip debug 日志，把每层日志（routing / endpoint / SD 的 log 行）对上——就像工作里 svlcom / svlsomeip / svlrouting 的 log。
 - Wireshark 抓 SOME/IP + SD，把"日志里某一层的动作"和"线上的一个包"对应起来。
 - 单机多节点：Docker 多容器（bridge、每容器独立 IP、**非 --net=host**，见 #656）当多 ECU；
-  3.5.7+ 记得容器内 `ip route add 224.0.0.0/4 dev eth0`（#947 多播路由回归，含最新 3.7.6）。
+  3.5.6 在容器内 SD 正常，无需额外路由；若试 3.5.7+，需在容器内执行
+  `ip route add 224.0.0.0/4 dev eth0`（#947 多播路由回归）。
 
 ## 关联本仓库（可选 sandbox，后续动手用）
+- 协议栈源码：`soc/communication/vsomeip/vsomeip-3.5.6/`（本地下载，git 忽略）。
 - `soc/communication/ara/com/` 骨架对应上面分层：Proxy/Skeleton(COM API) / SomeIpBinding(报文) / ServiceDiscovery(SD)；
   MCU 侧 PduR 是"路由"的另一形态。想动手时可在此复刻 vsomeip 的分层。
 
 ## 版本与环境结论（已用 GitHub API + CMakeLists 实测）
-- vsomeip 最新 = 3.7.6；依赖 C++20 / Boost ≥ 1.75 / CMake 3.13–3.28。
-- ⚠️ 工程规则是 C++17，而 vsomeip 库需 C++20 编译；其公共头能否在 C++17 下 include 未验证，集成时确认。
-- 备选 3.5.6（docker SD 开箱即用、回归前最后一版），但代码落后约两年。
+- **选定 3.5.6**：`CMAKE_CXX_STANDARD 17`，Boost ≥ 1.66、CMake ≥ 3.13，与工程 C++17 一致；
+  公共头已用 `g++ -std=c++17 -fsyntax-only` 验证通过。
+- 3.5.6 是 Docker SD 回归（#947，3.5.7 引入）前最后一版；3.5.7+ 容器内需
+  `ip route add 224.0.0.0/4 dev eth0`。
+- 最新版 3.8.0（2026-11-03）要求 C++20 / Boost ≥ 1.75，与工程 C++17 不兼容，暂不使用。
+- 3.3.8 / 3.4.10 更旧（均为 2023 年发布），不选。
 
 ## 参考
 - vsomeip 仓库：https://github.com/COVESA/vsomeip （重点目录：routing/、endpoints/）

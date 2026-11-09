@@ -1,7 +1,7 @@
 # 车载信号网关设计文档 v3.0
 
 > **定位**: 双芯架构原型，打通 MCU 物理信号 → SPI → CAN → SOME/IP 全链路
-> **技术栈**: NXP S32K144 + Ubuntu 24.04 + SPI + CAN + vsomeip
+> **技术栈**: NXP S32K144 + Ubuntu 24.04 + SPI + CAN + vsomeip 3.5.6
 > **设计原则**:
 > 1. 零额外学习成本: 无 RTOS，不依赖商业 AUTOSAR 工具
 > 2. 学做合一: 每个模块标注对应 AUTOSAR 概念
